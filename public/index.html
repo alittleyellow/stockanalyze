@@ -624,7 +624,7 @@
       <div class="card fade-in" style="animation-delay:0.1s">
         <div class="card-header">
           <h2>我的持仓</h2>
-          <span style="font-family:'DM Mono',monospace;font-size:0.72rem;color:var(--muted)" id="dataSource">数据来源: Yahoo Finance</span>
+          <span style="font-family:'DM Mono',monospace;font-size:0.72rem;color:var(--muted)" id="dataSource">数据来源: Finnhub</span>
         </div>
         <div id="holdingsContainer">
           <div class="empty-state">
@@ -680,7 +680,7 @@
 <div class="modal-overlay" id="modal">
   <div class="modal">
     <button class="close-btn" onclick="closeModal()">✕</button>
-    <h3>添加股票</h3>
+    <h3 id="modalTitle">添加股票</h3>
     <div class="form-group">
       <label>股票代码 (Ticker)</label>
       <input type="text" id="inputTicker" placeholder="例如: AAPL, TSLA, NVDA" style="text-transform:uppercase">
@@ -705,7 +705,7 @@
     </div>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">取消</button>
-      <button class="btn btn-primary" onclick="addStock()">添加</button>
+      <button class="btn btn-primary" id="modalSubmitBtn" onclick="addStock()">添加</button>
     </div>
   </div>
 </div>
@@ -781,15 +781,40 @@ let chartInstance = null;
 let lastAnalysisDate = '';
 let lastAnalysis = '';
 let currentUser = null;
+let editTicker = null;
 
-function openModal() { document.getElementById('modal').classList.add('open'); document.getElementById('inputTicker').focus(); }
+function openModal(ticker = null) {
+  editTicker = ticker;
+  const isEdit = !!ticker;
+  document.getElementById('modalTitle').textContent = isEdit ? '编辑持仓' : '添加股票';
+  document.getElementById('modalSubmitBtn').textContent = isEdit ? '保存' : '添加';
+  const tickerInput = document.getElementById('inputTicker');
+  tickerInput.disabled = isEdit;
+
+  if (isEdit) {
+    const h = holdings.find(x => x.ticker === ticker);
+    if (h) {
+      tickerInput.value = h.ticker;
+      document.getElementById('inputName').value = h.name === h.ticker ? '' : h.name;
+      document.getElementById('inputShares').value = h.shares;
+      document.getElementById('inputCost').value = h.cost;
+      document.getElementById('inputSector').value = h.sector === '未分类' ? '' : h.sector;
+    }
+  }
+
+  document.getElementById('modal').classList.add('open');
+  if (!isEdit) tickerInput.focus();
+}
+
 function closeModal() {
   document.getElementById('modal').classList.remove('open');
+  editTicker = null;
+  document.getElementById('inputTicker').disabled = false;
   ['inputTicker','inputName','inputShares','inputCost','inputSector'].forEach(id => document.getElementById(id).value = '');
 }
 
 async function addStock() {
-  const ticker = document.getElementById('inputTicker').value.trim().toUpperCase();
+  const ticker = editTicker || document.getElementById('inputTicker').value.trim().toUpperCase();
   const name = document.getElementById('inputName').value.trim();
   const shares = parseFloat(document.getElementById('inputShares').value);
   const cost = parseFloat(document.getElementById('inputCost').value);
@@ -799,17 +824,31 @@ async function addStock() {
   if (!shares || shares <= 0) return alert('请输入有效股数');
   if (!cost || cost <= 0) return alert('请输入有效成本价');
 
-  const res = await fetch('/api/holdings', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ticker, name: name || ticker, shares, cost, sector: sector || '未分类' }),
-  });
-  const data = await res.json();
-  if (data.error) return alert(data.error);
-  holdings = data;
-  closeModal();
-  renderTable();
-  fetchPrices();
+  if (editTicker) {
+    const res = await fetch(`/api/holdings/${ticker}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name || ticker, shares, cost, sector: sector || '未分类' }),
+    });
+    const data = await res.json();
+    if (data.error) return alert(data.error);
+    holdings = data;
+    closeModal();
+    renderTable();
+    fetchPrices();
+  } else {
+    const res = await fetch('/api/holdings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticker, name: name || ticker, shares, cost, sector: sector || '未分类' }),
+    });
+    const data = await res.json();
+    if (data.error) return alert(data.error);
+    holdings = data;
+    closeModal();
+    renderTable();
+    fetchPrices();
+  }
 }
 
 async function removeStock(ticker) {
@@ -963,7 +1002,10 @@ function renderTable() {
             <td>$${h.cost.toFixed(2)}</td>
             <td class="value-cell loading-cell">--</td>
             <td class="pnl-cell loading-cell">--</td>
-            <td><button onclick="event.stopPropagation();removeStock('${h.ticker}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;padding:4px" title="删除">✕</button></td>
+            <td style="white-space:nowrap">
+              <button onclick="event.stopPropagation();openModal('${h.ticker}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:0.95rem;padding:4px" title="编辑">✎</button>
+              <button onclick="event.stopPropagation();removeStock('${h.ticker}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;padding:4px" title="删除">✕</button>
+            </td>
           </tr>
         `).join('')}
       </tbody>

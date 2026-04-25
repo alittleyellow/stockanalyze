@@ -128,26 +128,54 @@ app.get('/api/history/:ticker', requireAuth, async (req, res) => {
   const toDate = new Date().toISOString().split('T')[0].replace(/-/g, '');
   const fromDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString().split('T')[0].replace(/-/g, '');
   try {
-    const url = `https://stooq.com/q/d/l/?s=${ticker.toLowerCase()}.us&d1=${fromDate}&d2=${toDate}&i=d`;
-    const r = await fetch(url, { timeout: 12000 });
+    const url = `https://stooq.com/q/d/l/?s=${ticker.toUpperCase()}.US&d1=${fromDate}&d2=${toDate}&i=d`;
+    const r = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
+      timeout: 12000,
+    });
     if (!r.ok) throw new Error(`stooq ${r.status}`);
     const csv = await r.text();
-    const lines = csv.split('\n').slice(1).filter(l => l.trim());
-    if (!lines.length) return res.json([]);
-    const history = lines.map(line => {
+
+    const lines = csv.split('\n').filter(l => l.trim());
+    if (lines.length < 2) return res.json([]);
+
+    // 从 header 动态找 Close 列，避免列序不同导致解析错误
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+    const dateIdx = headers.indexOf('date');
+    const closeIdx = headers.indexOf('close');
+    if (closeIdx === -1) return res.json([]);
+
+    const history = lines.slice(1).map(line => {
       const parts = line.split(',');
-      const dateStr = parts[0];
-      const close = parseFloat(parts[4]);
-      if (!dateStr || isNaN(close)) return null;
+      const dateStr = parts[dateIdx >= 0 ? dateIdx : 0]?.trim();
+      const close = parseFloat(parts[closeIdx]);
+      if (!dateStr || isNaN(close) || close < 0.01) return null;
       return {
         date: new Date(dateStr).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }),
         price: close,
       };
     }).filter(Boolean);
+
     res.json(history);
   } catch (e) {
     res.status(502).json({ error: e.message });
   }
+});
+
+// 编辑持仓
+app.put('/api/holdings/:ticker', requireAuth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.session.userId];
+  if (!user) return res.status(401).json({ error: '用户不存在' });
+  const h = user.holdings.find(h => h.ticker === req.params.ticker);
+  if (!h) return res.status(404).json({ error: '持仓不存在' });
+  const { name, shares, cost, sector } = req.body;
+  if (name !== undefined) h.name = name || req.params.ticker;
+  if (shares !== undefined) h.shares = shares;
+  if (cost !== undefined) h.cost = cost;
+  if (sector !== undefined) h.sector = sector || '未分类';
+  saveDB(db);
+  res.json(user.holdings);
 });
 
 // 获取新闻
