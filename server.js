@@ -24,6 +24,45 @@ const YAHOO_HEADERS = {
   'Origin': 'https://finance.yahoo.com',
 };
 
+// Yahoo Finance crumb management
+let yahooCookies = '';
+let yahooCrumb = '';
+let crumbExpiresAt = 0;
+
+async function refreshYahooCrumb() {
+  try {
+    const r1 = await fetch('https://finance.yahoo.com/', {
+      headers: { 'User-Agent': YAHOO_HEADERS['User-Agent'] },
+      redirect: 'follow',
+    });
+    const rawCookies = r1.headers.raw()['set-cookie'] || [];
+    yahooCookies = rawCookies.map(c => c.split(';')[0]).join('; ');
+
+    const r2 = await fetch('https://query2.finance.yahoo.com/v1/test/getcrumb', {
+      headers: { ...YAHOO_HEADERS, Cookie: yahooCookies },
+    });
+    if (r2.ok) {
+      yahooCrumb = await r2.text();
+      crumbExpiresAt = Date.now() + 60 * 60 * 1000;
+    }
+  } catch (e) {
+    console.error('Yahoo crumb refresh failed:', e.message);
+  }
+}
+
+async function yahooFetch(url) {
+  if (!yahooCrumb || Date.now() > crumbExpiresAt) await refreshYahooCrumb();
+  const fullUrl = yahooCrumb ? `${url}&crumb=${encodeURIComponent(yahooCrumb)}` : url;
+  const headers = { ...YAHOO_HEADERS, ...(yahooCookies ? { Cookie: yahooCookies } : {}) };
+  let res = await fetch(fullUrl, { headers, timeout: 10000 });
+  if (res.status === 401) {
+    await refreshYahooCrumb();
+    const retryUrl = yahooCrumb ? `${url}&crumb=${encodeURIComponent(yahooCrumb)}` : url;
+    res = await fetch(retryUrl, { headers: { ...YAHOO_HEADERS, ...(yahooCookies ? { Cookie: yahooCookies } : {}) }, timeout: 10000 });
+  }
+  return res;
+}
+
 app.use(cors());
 app.use(express.json());
 app.use(session({
@@ -119,7 +158,7 @@ app.get('/api/quote/:ticker', requireAuth, async (req, res) => {
 
   for (const url of urls) {
     try {
-      const response = await fetch(url, { headers: YAHOO_HEADERS, timeout: 10000 });
+      const response = await yahooFetch(url);
       if (!response.ok) continue;
       const data = await response.json();
 
@@ -157,7 +196,7 @@ app.get('/api/history/:ticker', requireAuth, async (req, res) => {
   const { ticker } = req.params;
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1mo`;
   try {
-    const response = await fetch(url, { headers: YAHOO_HEADERS, timeout: 10000 });
+    const response = await yahooFetch(url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     const result = data?.chart?.result?.[0];
@@ -179,7 +218,7 @@ app.get('/api/news', requireAuth, async (req, res) => {
   if (!tickers) return res.json([]);
   const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${tickers}&newsCount=8&enableFuzzyQuery=false&enableEnhancedTrivialQuery=true`;
   try {
-    const response = await fetch(url, { headers: YAHOO_HEADERS, timeout: 10000 });
+    const response = await yahooFetch(url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     res.json(data?.news || []);

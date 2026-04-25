@@ -822,9 +822,20 @@ async function removeStock(ticker) {
   updateSummary();
 }
 
+function handleSessionExpiry() {
+  currentUser = null;
+  holdings = [];
+  priceCache = {};
+  renderTable();
+  updateSummary();
+  document.getElementById('currentUserBadge').textContent = '';
+  document.getElementById('authScreen').style.display = 'flex';
+}
+
 async function fetchPrice(ticker) {
   try {
     const res = await fetch(`/api/quote/${ticker}`, { signal: AbortSignal.timeout(12000) });
+    if (res.status === 401) { handleSessionExpiry(); return null; }
     if (!res.ok) return null;
     const d = await res.json();
     if (d.error) return null;
