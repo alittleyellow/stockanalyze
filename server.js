@@ -8,7 +8,7 @@ const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DB_FILE = path.join(__dirname, 'db.json');
+const DB_FILE = process.env.DB_PATH || path.join(__dirname, 'db.json');
 
 function loadDB() {
   if (!fs.existsSync(DB_FILE)) return { users: {} };
@@ -122,18 +122,28 @@ app.get('/api/quote/:ticker', requireAuth, async (req, res) => {
   }
 });
 
-// 获取历史数据（走势图）
+// 获取历史数据（走势图）—— 使用 Stooq，无需 API key
 app.get('/api/history/:ticker', requireAuth, async (req, res) => {
   const { ticker } = req.params;
-  const to = Math.floor(Date.now() / 1000);
-  const from = to - 30 * 24 * 60 * 60;
+  const toDate = new Date().toISOString().split('T')[0].replace(/-/g, '');
+  const fromDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString().split('T')[0].replace(/-/g, '');
   try {
-    const data = await finnhub(`/stock/candle?symbol=${ticker}&resolution=D&from=${from}&to=${to}`);
-    if (data.s !== 'ok' || !data.c) return res.json([]);
-    const history = data.t.map((t, i) => ({
-      date: new Date(t * 1000).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }),
-      price: data.c[i],
-    })).filter(x => x.price != null);
+    const url = `https://stooq.com/q/d/l/?s=${ticker.toLowerCase()}.us&d1=${fromDate}&d2=${toDate}&i=d`;
+    const r = await fetch(url, { timeout: 12000 });
+    if (!r.ok) throw new Error(`stooq ${r.status}`);
+    const csv = await r.text();
+    const lines = csv.split('\n').slice(1).filter(l => l.trim());
+    if (!lines.length) return res.json([]);
+    const history = lines.map(line => {
+      const parts = line.split(',');
+      const dateStr = parts[0];
+      const close = parseFloat(parts[4]);
+      if (!dateStr || isNaN(close)) return null;
+      return {
+        date: new Date(dateStr).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }),
+        price: close,
+      };
+    }).filter(Boolean);
     res.json(history);
   } catch (e) {
     res.status(502).json({ error: e.message });
