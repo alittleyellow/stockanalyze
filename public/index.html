@@ -484,6 +484,86 @@
   .fade-in { animation: fadeIn 0.4s ease both; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
+  /* Auth Screen */
+  .auth-screen {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .auth-card {
+    background: var(--bg2);
+    border: 0.5px solid var(--border2);
+    border-radius: 20px;
+    padding: 2.5rem;
+    width: 380px;
+    max-width: 90vw;
+  }
+
+  .auth-logo {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 2rem;
+  }
+
+  .auth-logo h1 { font-size: 1.4rem; font-weight: 700; }
+  .auth-logo span {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--accent);
+    background: rgba(124,111,255,0.12);
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 0.5px solid rgba(124,111,255,0.3);
+  }
+
+  .auth-tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 1.5rem;
+    border: 0.5px solid var(--border2);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .auth-tab {
+    flex: 1;
+    font-family: 'Syne', sans-serif;
+    font-size: 0.85rem;
+    font-weight: 500;
+    padding: 0.5rem;
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .auth-tab.active { background: var(--accent); color: #fff; }
+  .auth-tab:not(.active):hover { background: rgba(255,255,255,0.04); color: var(--text); }
+
+  .auth-error {
+    color: var(--red);
+    font-size: 0.78rem;
+    margin-bottom: 0.8rem;
+    min-height: 1.1em;
+  }
+
+  .user-badge {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--accent);
+    background: rgba(124,111,255,0.1);
+    border: 0.5px solid rgba(124,111,255,0.25);
+    padding: 3px 10px;
+    border-radius: 4px;
+  }
+
   .tag-row { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.4rem; }
 
   .empty-state {
@@ -506,7 +586,9 @@
     </div>
     <div class="header-right">
       <span class="last-update" id="lastUpdate">--</span>
+      <span class="user-badge" id="currentUserBadge"></span>
       <button class="btn" onclick="refreshAll()">↻ 刷新</button>
+      <button class="btn" onclick="logout()">退出</button>
       <button class="btn btn-primary" onclick="openModal()">＋ 添加股票</button>
     </div>
   </header>
@@ -629,6 +711,49 @@
 </div>
 
 
+<!-- Auth Screen -->
+<div id="authScreen" class="auth-screen">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <h1>股票看板</h1>
+      <span>BETA</span>
+    </div>
+    <div class="auth-tabs">
+      <button id="loginTabBtn" class="auth-tab active" onclick="showLoginTab()">登录</button>
+      <button id="registerTabBtn" class="auth-tab" onclick="showRegisterTab()">注册</button>
+    </div>
+    <div class="auth-error" id="authError"></div>
+
+    <div id="loginTab">
+      <div class="form-group">
+        <label>用户名</label>
+        <input type="text" id="authUsername" placeholder="请输入用户名" autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label>密码</label>
+        <input type="password" id="authPassword" placeholder="请输入密码" autocomplete="current-password">
+      </div>
+      <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:0.8rem" onclick="login()">登录</button>
+    </div>
+
+    <div id="registerTab" style="display:none">
+      <div class="form-group">
+        <label>用户名</label>
+        <input type="text" id="regUsername" placeholder="至少2个字符" autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label>密码</label>
+        <input type="password" id="regPassword" placeholder="至少6位" autocomplete="new-password">
+      </div>
+      <div class="form-group">
+        <label>确认密码</label>
+        <input type="password" id="regPassword2" placeholder="再次输入密码" autocomplete="new-password">
+      </div>
+      <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:0.8rem" onclick="register()">注册</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const YAHOO1 = 'https://query1.finance.yahoo.com';
 const YAHOO2 = 'https://query2.finance.yahoo.com';
@@ -650,20 +775,20 @@ async function proxyFetch(url) {
   throw new Error('所有代理均失败');
 }
 
-let holdings = JSON.parse(localStorage.getItem('holdings') || '[]');
+let holdings = [];
 let priceCache = {};
 let chartInstance = null;
-let lastAnalysisDate = localStorage.getItem('lastAnalysisDate') || '';
-let lastAnalysis = localStorage.getItem('lastAnalysis') || '';
+let lastAnalysisDate = '';
+let lastAnalysis = '';
+let currentUser = null;
 
-function saveHoldings() { localStorage.setItem('holdings', JSON.stringify(holdings)); }
 function openModal() { document.getElementById('modal').classList.add('open'); document.getElementById('inputTicker').focus(); }
 function closeModal() {
   document.getElementById('modal').classList.remove('open');
   ['inputTicker','inputName','inputShares','inputCost','inputSector'].forEach(id => document.getElementById(id).value = '');
 }
 
-function addStock() {
+async function addStock() {
   const ticker = document.getElementById('inputTicker').value.trim().toUpperCase();
   const name = document.getElementById('inputName').value.trim();
   const shares = parseFloat(document.getElementById('inputShares').value);
@@ -673,19 +798,26 @@ function addStock() {
   if (!ticker) return alert('请输入股票代码');
   if (!shares || shares <= 0) return alert('请输入有效股数');
   if (!cost || cost <= 0) return alert('请输入有效成本价');
-  if (holdings.find(h => h.ticker === ticker)) return alert('该股票已在持仓中');
 
-  holdings.push({ ticker, name: name || ticker, shares, cost, sector: sector || '未分类', addedAt: Date.now() });
-  saveHoldings();
+  const res = await fetch('/api/holdings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ticker, name: name || ticker, shares, cost, sector: sector || '未分类' }),
+  });
+  const data = await res.json();
+  if (data.error) return alert(data.error);
+  holdings = data;
   closeModal();
   renderTable();
   fetchPrices();
 }
 
-function removeStock(ticker) {
+async function removeStock(ticker) {
   if (!confirm(`确认删除 ${ticker}?`)) return;
-  holdings = holdings.filter(h => h.ticker !== ticker);
-  saveHoldings();
+  const res = await fetch(`/api/holdings/${ticker}`, { method: 'DELETE' });
+  const data = await res.json();
+  if (data.error) return alert(data.error);
+  holdings = data;
   renderTable();
   updateSummary();
 }
@@ -943,8 +1075,6 @@ ${portfolioData}
     const text = data.text || '';
     lastAnalysis = text;
     lastAnalysisDate = new Date().toDateString();
-    localStorage.setItem('lastAnalysis', text);
-    localStorage.setItem('lastAnalysisDate', lastAnalysisDate);
     renderAnalysis(text);
   } catch(e) {
     aiEl.className = 'ai-content';
@@ -967,16 +1097,103 @@ function renderAnalysis(text) {
 function refreshAll() {
   lastAnalysisDate = '';
   lastAnalysis = '';
-  localStorage.removeItem('lastAnalysisDate');
-  localStorage.removeItem('lastAnalysis');
   fetchPrices();
 }
 
-document.getElementById('inputTicker').addEventListener('keydown', e => { if (e.key === 'Enter') addStock(); });
+// Auth functions
+function showLoginTab() {
+  document.getElementById('loginTab').style.display = 'block';
+  document.getElementById('registerTab').style.display = 'none';
+  document.getElementById('loginTabBtn').classList.add('active');
+  document.getElementById('registerTabBtn').classList.remove('active');
+  document.getElementById('authError').textContent = '';
+}
 
-// Init
-renderTable();
-if (holdings.length) { fetchPrices(); }
+function showRegisterTab() {
+  document.getElementById('loginTab').style.display = 'none';
+  document.getElementById('registerTab').style.display = 'block';
+  document.getElementById('loginTabBtn').classList.remove('active');
+  document.getElementById('registerTabBtn').classList.add('active');
+  document.getElementById('authError').textContent = '';
+}
+
+async function login() {
+  const username = document.getElementById('authUsername').value.trim();
+  const password = document.getElementById('authPassword').value;
+  if (!username || !password) return document.getElementById('authError').textContent = '请填写用户名和密码';
+  const res = await fetch('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const data = await res.json();
+  if (data.error) return document.getElementById('authError').textContent = data.error;
+  currentUser = data.username;
+  await loadHoldings();
+  document.getElementById('authScreen').style.display = 'none';
+  document.getElementById('currentUserBadge').textContent = currentUser;
+}
+
+async function register() {
+  const username = document.getElementById('regUsername').value.trim();
+  const password = document.getElementById('regPassword').value;
+  const password2 = document.getElementById('regPassword2').value;
+  if (!username || !password) return document.getElementById('authError').textContent = '请填写用户名和密码';
+  if (password !== password2) return document.getElementById('authError').textContent = '两次密码不一致';
+  const res = await fetch('/api/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const data = await res.json();
+  if (data.error) return document.getElementById('authError').textContent = data.error;
+  currentUser = data.username;
+  await loadHoldings();
+  document.getElementById('authScreen').style.display = 'none';
+  document.getElementById('currentUserBadge').textContent = currentUser;
+}
+
+async function logout() {
+  await fetch('/api/logout', { method: 'POST' });
+  currentUser = null;
+  holdings = [];
+  priceCache = {};
+  lastAnalysisDate = '';
+  lastAnalysis = '';
+  renderTable();
+  updateSummary();
+  document.getElementById('currentUserBadge').textContent = '';
+  document.getElementById('authScreen').style.display = 'flex';
+  document.getElementById('authUsername').value = '';
+  document.getElementById('authPassword').value = '';
+}
+
+async function loadHoldings() {
+  const res = await fetch('/api/holdings');
+  const data = await res.json();
+  if (!data.error) {
+    holdings = data;
+    renderTable();
+    if (holdings.length) fetchPrices();
+  }
+}
+
+document.getElementById('inputTicker').addEventListener('keydown', e => { if (e.key === 'Enter') addStock(); });
+document.getElementById('authPassword').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+document.getElementById('regPassword2').addEventListener('keydown', e => { if (e.key === 'Enter') register(); });
+
+// Init: check auth state
+(async () => {
+  const res = await fetch('/api/me');
+  const data = await res.json();
+  if (data.user) {
+    currentUser = data.user;
+    document.getElementById('currentUserBadge').textContent = currentUser;
+    document.getElementById('authScreen').style.display = 'none';
+    await loadHoldings();
+  }
+  // else: auth screen stays visible (default)
+})();
 
 // Auto refresh every 5 minutes
 setInterval(() => { if (holdings.length) fetchPrices(); }, 5 * 60 * 1000);
