@@ -16,51 +16,14 @@ function loadDB() {
 }
 function saveDB(db) { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); }
 
-const YAHOO_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Accept': 'application/json, text/plain, */*',
-  'Accept-Language': 'en-US,en;q=0.9',
-  'Referer': 'https://finance.yahoo.com',
-  'Origin': 'https://finance.yahoo.com',
-};
+// Finnhub API helper
+const FINNHUB_KEY = process.env.FINNHUB_API_KEY || '';
 
-// Yahoo Finance crumb management
-let yahooCookies = '';
-let yahooCrumb = '';
-let crumbExpiresAt = 0;
-
-async function refreshYahooCrumb() {
-  try {
-    const r1 = await fetch('https://finance.yahoo.com/', {
-      headers: { 'User-Agent': YAHOO_HEADERS['User-Agent'] },
-      redirect: 'follow',
-    });
-    const rawCookies = r1.headers.raw()['set-cookie'] || [];
-    yahooCookies = rawCookies.map(c => c.split(';')[0]).join('; ');
-
-    const r2 = await fetch('https://query2.finance.yahoo.com/v1/test/getcrumb', {
-      headers: { ...YAHOO_HEADERS, Cookie: yahooCookies },
-    });
-    if (r2.ok) {
-      yahooCrumb = await r2.text();
-      crumbExpiresAt = Date.now() + 60 * 60 * 1000;
-    }
-  } catch (e) {
-    console.error('Yahoo crumb refresh failed:', e.message);
-  }
-}
-
-async function yahooFetch(url) {
-  if (!yahooCrumb || Date.now() > crumbExpiresAt) await refreshYahooCrumb();
-  const fullUrl = yahooCrumb ? `${url}&crumb=${encodeURIComponent(yahooCrumb)}` : url;
-  const headers = { ...YAHOO_HEADERS, ...(yahooCookies ? { Cookie: yahooCookies } : {}) };
-  let res = await fetch(fullUrl, { headers, timeout: 10000 });
-  if (res.status === 401) {
-    await refreshYahooCrumb();
-    const retryUrl = yahooCrumb ? `${url}&crumb=${encodeURIComponent(yahooCrumb)}` : url;
-    res = await fetch(retryUrl, { headers: { ...YAHOO_HEADERS, ...(yahooCookies ? { Cookie: yahooCookies } : {}) }, timeout: 10000 });
-  }
-  return res;
+async function finnhub(path) {
+  if (!FINNHUB_KEY) throw new Error('未配置 FINNHUB_API_KEY');
+  const res = await fetch(`https://finnhub.io/api/v1${path}&token=${FINNHUB_KEY}`, { timeout: 10000 });
+  if (!res.ok) throw new Error(`Finnhub ${res.status}`);
+  return res.json();
 }
 
 app.use(cors());
@@ -150,62 +113,27 @@ app.delete('/api/holdings/:ticker', requireAuth, (req, res) => {
 // 获取股票现价
 app.get('/api/quote/:ticker', requireAuth, async (req, res) => {
   const { ticker } = req.params;
-  const urls = [
-    `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d`,
-    `https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d`,
-    `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${ticker}`,
-  ];
-
-  for (const url of urls) {
-    try {
-      const response = await yahooFetch(url);
-      if (!response.ok) continue;
-      const data = await response.json();
-
-      const meta = data?.chart?.result?.[0]?.meta;
-      if (meta?.regularMarketPrice) {
-        return res.json({
-          ticker,
-          price: meta.regularMarketPrice,
-          prev: meta.chartPreviousClose || meta.previousClose,
-          currency: meta.currency || 'USD',
-          name: meta.longName || meta.shortName || ticker,
-        });
-      }
-
-      const quote = data?.quoteResponse?.result?.[0];
-      if (quote?.regularMarketPrice) {
-        return res.json({
-          ticker,
-          price: quote.regularMarketPrice,
-          prev: quote.regularMarketPreviousClose,
-          currency: quote.currency || 'USD',
-          name: quote.longName || quote.shortName || ticker,
-        });
-      }
-    } catch (e) {
-      continue;
-    }
+  try {
+    const data = await finnhub(`/quote?symbol=${ticker}`);
+    if (!data.c || data.c === 0) return res.status(404).json({ error: `无法获取 ${ticker} 的数据` });
+    res.json({ ticker, price: data.c, prev: data.pc, currency: 'USD', name: ticker });
+  } catch (e) {
+    res.status(502).json({ error: e.message });
   }
-
-  res.status(502).json({ error: `无法获取 ${ticker} 的数据` });
 });
 
-// 获取历史数据
+// 获取历史数据（走势图）
 app.get('/api/history/:ticker', requireAuth, async (req, res) => {
   const { ticker } = req.params;
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1mo`;
+  const to = Math.floor(Date.now() / 1000);
+  const from = to - 30 * 24 * 60 * 60;
   try {
-    const response = await yahooFetch(url);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data = await response.json();
-    const result = data?.chart?.result?.[0];
-    if (!result) throw new Error('no data');
-    const timestamps = result.timestamp || [];
-    const closes = result.indicators?.quote?.[0]?.close || [];
-    const history = timestamps
-      .map((t, i) => ({ date: new Date(t * 1000).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }), price: closes[i] }))
-      .filter(x => x.price != null);
+    const data = await finnhub(`/stock/candle?symbol=${ticker}&resolution=D&from=${from}&to=${to}`);
+    if (data.s !== 'ok' || !data.c) return res.json([]);
+    const history = data.t.map((t, i) => ({
+      date: new Date(t * 1000).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }),
+      price: data.c[i],
+    })).filter(x => x.price != null);
     res.json(history);
   } catch (e) {
     res.status(502).json({ error: e.message });
@@ -216,12 +144,24 @@ app.get('/api/history/:ticker', requireAuth, async (req, res) => {
 app.get('/api/news', requireAuth, async (req, res) => {
   const { tickers } = req.query;
   if (!tickers) return res.json([]);
-  const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${tickers}&newsCount=8&enableFuzzyQuery=false&enableEnhancedTrivialQuery=true`;
+  const tickerList = tickers.split(',').slice(0, 3);
+  const toDate = new Date().toISOString().split('T')[0];
+  const fromDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   try {
-    const response = await yahooFetch(url);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data = await response.json();
-    res.json(data?.news || []);
+    const results = await Promise.all(
+      tickerList.map(t => finnhub(`/company-news?symbol=${t}&from=${fromDate}&to=${toDate}`).catch(() => []))
+    );
+    const news = results.flat()
+      .sort((a, b) => b.datetime - a.datetime)
+      .slice(0, 8)
+      .map(n => ({
+        title: n.headline,
+        link: n.url,
+        publisher: n.source,
+        providerPublishTime: n.datetime,
+        relatedTickers: [n.related || tickerList[0]],
+      }));
+    res.json(news);
   } catch (e) {
     res.status(502).json({ error: e.message });
   }
@@ -230,11 +170,9 @@ app.get('/api/news', requireAuth, async (req, res) => {
 // AI 分析
 app.post('/api/analyze', requireAuth, async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return res.status(503).json({ error: '服务器未配置 API Key' });
-
+  if (!apiKey) return res.status(503).json({ error: '服务器未配置 ANTHROPIC_API_KEY' });
   const { prompt } = req.body;
   if (!prompt) return res.status(400).json({ error: '缺少 prompt' });
-
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
