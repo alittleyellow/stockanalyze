@@ -628,22 +628,6 @@
   </div>
 </div>
 
-<!-- Settings: Claude API Key -->
-<div class="modal-overlay" id="apiModal">
-  <div class="modal">
-    <button class="close-btn" onclick="document.getElementById('apiModal').classList.remove('open')">✕</button>
-    <h3>设置 Claude API Key</h3>
-    <div class="form-group">
-      <label>Anthropic API Key</label>
-      <input type="password" id="inputApiKey" placeholder="sk-ant-...">
-    </div>
-    <p style="font-size:0.75rem;color:var(--muted);margin-top:0.5rem;line-height:1.6">API Key 仅保存在本地浏览器，不会上传到任何服务器。</p>
-    <div class="modal-actions">
-      <button class="btn" onclick="document.getElementById('apiModal').classList.remove('open')">取消</button>
-      <button class="btn btn-primary" onclick="saveApiKey()">保存</button>
-    </div>
-  </div>
-</div>
 
 <script>
 const YAHOO1 = 'https://query1.finance.yahoo.com';
@@ -673,8 +657,6 @@ let lastAnalysisDate = localStorage.getItem('lastAnalysisDate') || '';
 let lastAnalysis = localStorage.getItem('lastAnalysis') || '';
 
 function saveHoldings() { localStorage.setItem('holdings', JSON.stringify(holdings)); }
-function getApiKey() { return localStorage.getItem('claudeApiKey') || ''; }
-
 function openModal() { document.getElementById('modal').classList.add('open'); document.getElementById('inputTicker').focus(); }
 function closeModal() {
   document.getElementById('modal').classList.remove('open');
@@ -919,12 +901,6 @@ function getTimeAgo(ts) {
 function checkAndRunAnalysis() {
   if (!holdings.length) return;
   const today = new Date().toDateString();
-  const key = getApiKey();
-  if (!key) {
-    const aiEl = document.getElementById('aiContent');
-    aiEl.innerHTML = `<div style="color:var(--muted);font-size:0.82rem">请先设置 Claude API Key 以启用 AI 分析。<br><br><button class="btn" onclick="document.getElementById('apiModal').classList.add('open')" style="margin-top:0.5rem">设置 API Key</button></div>`;
-    return;
-  }
   if (lastAnalysisDate === today && lastAnalysis) {
     renderAnalysis(lastAnalysis);
     return;
@@ -933,8 +909,7 @@ function checkAndRunAnalysis() {
 }
 
 async function runAnalysis() {
-  const key = getApiKey();
-  if (!key || !holdings.length) return;
+  if (!holdings.length) return;
   const aiEl = document.getElementById('aiContent');
   aiEl.innerHTML = '<div class="loading"><span class="spinner"></span> Claude 正在分析你的持仓...</div>';
   aiEl.className = 'ai-content loading';
@@ -958,14 +933,14 @@ ${portfolioData}
 格式：直接输出分析，不要有多余的开场白。每只股票用单独一行。`;
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetch('/api/analyze', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: 'claude-opus-4-7', max_tokens: 800, messages: [{ role: 'user', content: prompt }] })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt })
     });
     const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
-    const text = data.content?.[0]?.text || '';
+    if (data.error) throw new Error(data.error);
+    const text = data.text || '';
     lastAnalysis = text;
     lastAnalysisDate = new Date().toDateString();
     localStorage.setItem('lastAnalysis', text);
@@ -973,7 +948,7 @@ ${portfolioData}
     renderAnalysis(text);
   } catch(e) {
     aiEl.className = 'ai-content';
-    aiEl.innerHTML = `<span style="color:var(--red);font-size:0.82rem">分析失败: ${e.message}。请检查 API Key 是否正确。</span>`;
+    aiEl.innerHTML = `<span style="color:var(--red);font-size:0.82rem">分析失败: ${e.message}</span>`;
   }
 }
 
@@ -997,23 +972,7 @@ function refreshAll() {
   fetchPrices();
 }
 
-function saveApiKey() {
-  const key = document.getElementById('inputApiKey').value.trim();
-  if (!key) return alert('请输入 API Key');
-  localStorage.setItem('claudeApiKey', key);
-  document.getElementById('apiModal').classList.remove('open');
-  checkAndRunAnalysis();
-}
-
 document.getElementById('inputTicker').addEventListener('keydown', e => { if (e.key === 'Enter') addStock(); });
-
-// Add API key button to header
-const headerRight = document.querySelector('.header-right');
-const apiBtn = document.createElement('button');
-apiBtn.className = 'btn';
-apiBtn.textContent = '⚙ API Key';
-apiBtn.onclick = () => document.getElementById('apiModal').classList.add('open');
-headerRight.insertBefore(apiBtn, headerRight.firstChild);
 
 // Init
 renderTable();
