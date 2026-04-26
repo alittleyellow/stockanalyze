@@ -164,6 +164,12 @@
   .negative { color: var(--red); }
   .neutral { color: var(--text); }
 
+  /* 红涨绿跌模式（中国 A 股习惯） */
+  body.cn-colors .positive { color: var(--red) !important; }
+  body.cn-colors .negative { color: var(--green) !important; }
+  body.cn-colors .signal.buy { background: rgba(231,76,60,0.12); color: var(--red); border-color: rgba(231,76,60,0.3); }
+  body.cn-colors .signal.sell { background: rgba(46,204,113,0.12); color: var(--green); border-color: rgba(46,204,113,0.3); }
+
   /* Main layout */
   .main-grid {
     display: grid;
@@ -728,6 +734,7 @@
     <div class="header-right">
       <span class="last-update" id="lastUpdate">--</span>
       <span class="user-badge" id="currentUserBadge"></span>
+      <button class="btn" id="colorModeBtn" onclick="toggleColorMode()" title="切换涨跌颜色">🟢 绿涨红跌</button>
       <button class="btn" onclick="refreshAll()">↻ 刷新</button>
       <button class="btn" onclick="logout()">退出</button>
       <button class="btn btn-primary" onclick="openModal()">＋ 添加股票</button>
@@ -1185,7 +1192,7 @@ async function showChart(ticker) {
   if (chartInstance) chartInstance.destroy();
   const ctx = document.getElementById('priceChart').getContext('2d');
   const isUp = data[data.length-1]?.price >= data[0]?.price;
-  const color = isUp ? '#2ecc71' : '#e74c3c';
+  const color = isUp ? posColor() : negColor();
   chartInstance = new Chart(ctx, {
     type: 'line',
     data: {
@@ -1193,7 +1200,7 @@ async function showChart(ticker) {
       datasets: [{ data: data.map(d => d.price), borderColor: color, borderWidth: 2, pointRadius: 0, fill: true,
         backgroundColor: ctx => {
           const g = ctx.chart.ctx.createLinearGradient(0,0,0,120);
-          g.addColorStop(0, isUp ? 'rgba(46,204,113,0.15)' : 'rgba(231,76,60,0.15)');
+          g.addColorStop(0, isUp ? (posColor() === '#2ecc71' ? 'rgba(46,204,113,0.15)' : 'rgba(231,76,60,0.15)') : (negColor() === '#e74c3c' ? 'rgba(231,76,60,0.15)' : 'rgba(46,204,113,0.15)'));
           g.addColorStop(1, 'transparent');
           return g;
         }, tension: 0.4 }]
@@ -1396,6 +1403,17 @@ async function loadHoldings() {
   }
 }
 
+// ── Color mode ────────────────────────────────────
+function toggleColorMode() {
+  const cn = document.body.classList.toggle('cn-colors');
+  localStorage.setItem('colorMode', cn ? 'cn' : 'default');
+  document.getElementById('colorModeBtn').textContent = cn ? '🔴 红涨绿跌' : '🟢 绿涨红跌';
+  if (chartInstance) showChart(document.getElementById('chartTitle').textContent.replace(' 近30天走势', ''));
+}
+function posColor() { return document.body.classList.contains('cn-colors') ? '#e74c3c' : '#2ecc71'; }
+function negColor() { return document.body.classList.contains('cn-colors') ? '#2ecc71' : '#e74c3c'; }
+// ──────────────────────────────────────────────────
+
 // ── Chat ──────────────────────────────────────────
 let chatHistory = [];
 let chatRemaining = null;
@@ -1479,6 +1497,12 @@ async function sendChat() {
 document.getElementById('inputTicker').addEventListener('keydown', e => { if (e.key === 'Enter') addStock(); });
 document.getElementById('authPassword').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
 document.getElementById('regPassword2').addEventListener('keydown', e => { if (e.key === 'Enter') register(); });
+
+// 恢复颜色偏好
+if (localStorage.getItem('colorMode') === 'cn') {
+  document.body.classList.add('cn-colors');
+  document.getElementById('colorModeBtn').textContent = '🔴 红涨绿跌';
+}
 
 // Init: check auth state
 (async () => {
