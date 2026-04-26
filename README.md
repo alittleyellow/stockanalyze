@@ -2,7 +2,6 @@
 
 个人股票持仓追踪工具，支持实时行情、AI 分析和多用户登录。
 
-![screenshot](https://via.placeholder.com/800x400?text=Stock+Dashboard)
 
 ## 功能
 
