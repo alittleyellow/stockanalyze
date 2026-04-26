@@ -122,13 +122,15 @@ app.get('/api/quote/:ticker', requireAuth, async (req, res) => {
   }
 });
 
-// 获取历史数据（走势图）—— Finnhub 优先，stooq 备用
+// 获取历史数据（走势图）—— Finnhub 优先，Twelve Data 备用
+const TWELVE_DATA_KEY = process.env.TWELVE_DATA_KEY || '';
+
 app.get('/api/history/:ticker', requireAuth, async (req, res) => {
   const { ticker } = req.params;
   const to = Math.floor(Date.now() / 1000);
   const from = to - 31 * 24 * 60 * 60;
 
-  // 优先：Finnhub candles（跟现价同一 API，云服务器可靠）
+  // 优先：Finnhub candles
   try {
     const data = await finnhub(`/stock/candle?symbol=${ticker}&resolution=D&from=${from}&to=${to}`);
     if (data.s === 'ok' && Array.isArray(data.c) && data.c.length > 0) {
@@ -136,51 +138,33 @@ app.get('/api/history/:ticker', requireAuth, async (req, res) => {
         date: new Date(t * 1000).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }),
         price: data.c[i],
       })).filter(x => x.price > 0);
-      return res.json(history);
+      if (history.length > 0) return res.json(history);
     }
-    console.log(`Finnhub candle ${ticker}: s=${data.s}, points=${data.c?.length ?? 0}`);
   } catch (e) {
     console.error(`Finnhub candle ${ticker}:`, e.message);
   }
 
-  // 备用：stooq CSV
-  try {
-    const toDate = new Date().toISOString().split('T')[0].replace(/-/g, '');
-    const fromDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString().split('T')[0].replace(/-/g, '');
-    const url = `https://stooq.com/q/d/l/?s=${ticker.toUpperCase()}.US&d1=${fromDate}&d2=${toDate}&i=d`;
-    const r = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
-      timeout: 12000,
-    });
-    if (!r.ok) throw new Error(`stooq ${r.status}`);
-    const csv = await r.text();
-    console.log(`Stooq ${ticker} raw(200):`, csv.substring(0, 200));
-
-    const lines = csv.split('\n').filter(l => l.trim());
-    if (lines.length < 2) return res.json([]);
-    const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-    const closeIdx = headers.indexOf('close');
-    if (closeIdx === -1) {
-      console.error(`Stooq ${ticker} no close col, headers:`, headers);
-      return res.json([]);
+  // 备用：Twelve Data（免费 800次/天，云服务器无 IP 限制）
+  if (TWELVE_DATA_KEY) {
+    try {
+      const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(ticker)}&interval=1day&outputsize=31&apikey=${TWELVE_DATA_KEY}`;
+      const r = await fetch(url, { timeout: 10000 });
+      if (!r.ok) throw new Error(`Twelve Data ${r.status}`);
+      const data = await r.json();
+      if (data.status === 'ok' && Array.isArray(data.values) && data.values.length > 0) {
+        const history = [...data.values].reverse().map(v => ({
+          date: new Date(v.datetime).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }),
+          price: parseFloat(v.close),
+        })).filter(x => !isNaN(x.price) && x.price > 0);
+        if (history.length > 0) return res.json(history);
+      }
+      console.error(`Twelve Data ${ticker}:`, data.message || data.status);
+    } catch (e) {
+      console.error(`Twelve Data ${ticker}:`, e.message);
     }
-
-    const history = lines.slice(1).map(line => {
-      const parts = line.split(',');
-      const dateStr = parts[0]?.trim();
-      const close = parseFloat(parts[closeIdx]);
-      if (!dateStr || isNaN(close) || close < 0.5) return null;
-      return {
-        date: new Date(dateStr).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }),
-        price: close,
-      };
-    }).filter(Boolean);
-
-    return res.json(history);
-  } catch (e) {
-    console.error(`Stooq ${ticker}:`, e.message);
-    res.status(502).json({ error: '历史数据暂时不可用' });
   }
+
+  res.status(503).json({ error: '历史数据暂时不可用，请配置 TWELVE_DATA_KEY' });
 });
 
 // 编辑持仓
@@ -226,6 +210,41 @@ app.get('/api/news', requireAuth, async (req, res) => {
   }
 });
 
+// AI 统一调用helper — 优先 OpenAI，备用 Anthropic
+async function callAI({ system, messages, maxTokens = 600, model }) {
+  const openaiKey = process.env.OPENAI_API_KEY;
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+
+  if (openaiKey) {
+    const finalModel = model || process.env.CHAT_MODEL || 'gpt-4o-mini';
+    const fullMessages = system ? [{ role: 'system', content: system }, ...messages] : messages;
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
+      body: JSON.stringify({ model: finalModel, max_tokens: maxTokens, messages: fullMessages }),
+      timeout: 30000,
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return data.choices?.[0]?.message?.content || '';
+  }
+
+  if (anthropicKey) {
+    const finalModel = model || process.env.CHAT_MODEL || 'claude-sonnet-4-6';
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': anthropicKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: finalModel, max_tokens: maxTokens, ...(system ? { system } : {}), messages }),
+      timeout: 30000,
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return data.content?.[0]?.text || '';
+  }
+
+  throw new Error('未配置 OPENAI_API_KEY 或 ANTHROPIC_API_KEY');
+}
+
 // AI 聊天 — 每日次数限制
 const DAILY_CHAT_LIMIT = parseInt(process.env.DAILY_CHAT_LIMIT || '10');
 
@@ -238,8 +257,8 @@ app.get('/api/chat/remaining', requireAuth, (req, res) => {
 });
 
 app.post('/api/chat', requireAuth, async (req, res) => {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return res.status(503).json({ error: '服务器未配置 API Key' });
+  if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY)
+    return res.status(503).json({ error: '服务器未配置 AI API Key' });
 
   const { message, history } = req.body;
   if (!message?.trim()) return res.status(400).json({ error: '消息不能为空' });
@@ -264,19 +283,12 @@ app.post('/api/chat', requireAuth, async (req, res) => {
   const messages = [...(Array.isArray(history) ? history.slice(-10) : []), { role: 'user', content: message }];
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 600,
-        system: `你是专业的股票投资顾问。${portfolioCtx}。请用中文简洁回答，聚焦投资、股票、市场分析话题。`,
-        messages,
-      }),
+    const text = await callAI({
+      system: `你是专业的股票投资顾问。${portfolioCtx}。请用中文简洁回答，聚焦投资、股票、市场分析话题。`,
+      messages,
+      maxTokens: 600,
     });
-    const data = await response.json();
-    if (data.error) throw new Error(data.error.message);
-    res.json({ text: data.content?.[0]?.text || '', remaining });
+    res.json({ text, remaining });
   } catch (e) {
     user.chatUsage.count--;
     saveDB(db);
@@ -286,23 +298,19 @@ app.post('/api/chat', requireAuth, async (req, res) => {
 
 // AI 分析
 app.post('/api/analyze', requireAuth, async (req, res) => {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return res.status(503).json({ error: '服务器未配置 ANTHROPIC_API_KEY' });
+  if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY)
+    return res.status(503).json({ error: '服务器未配置 AI API Key' });
   const { prompt } = req.body;
   if (!prompt) return res.status(400).json({ error: '缺少 prompt' });
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({ model: 'claude-opus-4-7', max_tokens: 800, messages: [{ role: 'user', content: prompt }] }),
+    const analyzeModel = process.env.ANALYZE_MODEL ||
+      (process.env.OPENAI_API_KEY ? 'gpt-4o' : 'claude-opus-4-7');
+    const text = await callAI({
+      messages: [{ role: 'user', content: prompt }],
+      maxTokens: 800,
+      model: analyzeModel,
     });
-    const data = await response.json();
-    if (data.error) return res.status(502).json({ error: data.error.message });
-    res.json({ text: data.content?.[0]?.text || '' });
+    res.json({ text });
   } catch (e) {
     res.status(502).json({ error: e.message });
   }
