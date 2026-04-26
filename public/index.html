@@ -604,8 +604,8 @@
     position: fixed;
     bottom: 5.2rem;
     right: 1.8rem;
-    width: 360px;
-    max-height: 520px;
+    width: 440px;
+    height: 620px;
     background: var(--bg2);
     border: 0.5px solid var(--border2);
     border-radius: 18px;
@@ -641,17 +641,34 @@
     display: flex;
     flex-direction: column;
     gap: 0.7rem;
-    max-height: 350px;
   }
 
   .chat-bubble {
-    max-width: 86%;
+    max-width: 88%;
     font-size: 0.82rem;
     line-height: 1.65;
     padding: 0.6rem 0.85rem;
     border-radius: 14px;
     word-break: break-word;
-    white-space: pre-wrap;
+  }
+  .chat-bubble pre {
+    background: rgba(0,0,0,0.3);
+    border-radius: 6px;
+    padding: 0.6rem 0.8rem;
+    overflow-x: auto;
+    margin: 0.4rem 0;
+    font-size: 0.78rem;
+  }
+  .chat-bubble code {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.78rem;
+    background: rgba(0,0,0,0.2);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  .chat-bubble pre code {
+    background: none;
+    padding: 0;
   }
   .chat-bubble-user {
     align-self: flex-end;
@@ -678,29 +695,46 @@
 
   .chat-input-row {
     display: flex;
+    flex-direction: column;
     gap: 0.5rem;
     padding: 0.75rem 0.9rem;
     border-top: 0.5px solid var(--border);
   }
-  .chat-input-row input {
-    flex: 1;
+  .chat-input-row textarea {
+    width: 100%;
     background: var(--bg3);
     border: 0.5px solid var(--border2);
-    border-radius: 8px;
-    padding: 0.5rem 0.75rem;
+    border-radius: 10px;
+    padding: 0.55rem 0.75rem;
     color: var(--text);
     font-family: 'Syne', sans-serif;
     font-size: 0.82rem;
     outline: none;
     transition: border-color 0.15s;
+    resize: none;
+    min-height: 40px;
+    max-height: 120px;
+    line-height: 1.5;
+    box-sizing: border-box;
   }
-  .chat-input-row input:focus { border-color: var(--accent); }
+  .chat-input-row textarea:focus { border-color: var(--accent); }
+  .chat-input-actions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .chat-hint {
+    font-size: 0.68rem;
+    color: var(--muted);
+    flex: 1;
+  }
   .chat-send {
     background: var(--accent);
     color: #fff;
     border: none;
     border-radius: 8px;
-    padding: 0.5rem 0.85rem;
+    padding: 0.45rem 0.9rem;
     font-family: 'Syne', sans-serif;
     font-size: 0.8rem;
     font-weight: 500;
@@ -710,6 +744,17 @@
   }
   .chat-send:hover { background: #6a5fff; }
   .chat-send:disabled { opacity: 0.45; cursor: not-allowed; }
+  .chat-clear-btn {
+    background: none;
+    border: 0.5px solid var(--border2);
+    border-radius: 6px;
+    color: var(--muted);
+    font-size: 0.72rem;
+    padding: 0.3rem 0.6rem;
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+  .chat-clear-btn:hover { color: var(--text); }
 
   .tag-row { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.4rem; }
 
@@ -869,16 +914,20 @@
 <!-- Chat Panel -->
 <div class="chat-panel" id="chatPanel">
   <div class="chat-panel-header">
-    <h4>AI 股票顾问</h4>
+    <h4>✦ Claude AI</h4>
     <span class="chat-quota" id="chatQuota">加载中...</span>
-    <button onclick="toggleChat()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem;padding:0 0 0 0.4rem;line-height:1">✕</button>
+    <button onclick="clearChat()" class="chat-clear-btn">清空</button>
+    <button onclick="toggleChat()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem;padding:0 0 0 0.2rem;line-height:1">✕</button>
   </div>
   <div class="chat-messages" id="chatMessages">
-    <div class="chat-bubble chat-bubble-ai">你好！我是你的 AI 投资顾问，可以问我关于持仓分析、市场动态、选股策略等问题 📊</div>
+    <div class="chat-bubble chat-bubble-ai">你好！我是 Claude，有什么可以帮你的？可以聊股票、编程、写作，或任何话题 ✦</div>
   </div>
   <div class="chat-input-row">
-    <input type="text" id="chatInput" placeholder="问我关于股票的任何问题..." maxlength="500">
-    <button class="chat-send" id="chatSendBtn" onclick="sendChat()">发送</button>
+    <textarea id="chatInput" placeholder="发送消息... (Enter 发送，Shift+Enter 换行)" rows="1"></textarea>
+    <div class="chat-input-actions">
+      <span class="chat-hint">Shift+Enter 换行</span>
+      <button class="chat-send" id="chatSendBtn" onclick="sendChat()">发送</button>
+    </div>
   </div>
 </div>
 
@@ -1443,14 +1492,46 @@ function toggleChat() {
   }
 }
 
-function appendBubble(role, text) {
+function clearChat() {
+  chatHistory = [];
+  const wrap = document.getElementById('chatMessages');
+  wrap.innerHTML = '<div class="chat-bubble chat-bubble-ai">你好！我是 Claude，有什么可以帮你的？可以聊股票、编程、写作，或任何话题 ✦</div>';
+}
+
+function renderMarkdown(text) {
+  const segments = text.split(/(```[\s\S]*?```)/g);
+  return segments.map(seg => {
+    if (seg.startsWith('```')) {
+      const code = seg.slice(3).replace(/^[^\n]*\n?/, '').replace(/```$/, '').trim();
+      const escaped = code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      return `<pre><code>${escaped}</code></pre>`;
+    }
+    return seg
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
+      .replace(/\n/g, '<br>');
+  }).join('');
+}
+
+function appendBubble(role, text, isTyping) {
   const wrap = document.getElementById('chatMessages');
   const el = document.createElement('div');
   el.className = `chat-bubble chat-bubble-${role}`;
-  el.textContent = text;
+  if (role === 'ai' && !isTyping) {
+    el.innerHTML = renderMarkdown(text);
+  } else {
+    el.textContent = text;
+  }
   wrap.appendChild(el);
   wrap.scrollTop = wrap.scrollHeight;
   return el;
+}
+
+function autoResizeTextarea(ta) {
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
 }
 
 async function sendChat() {
@@ -1460,6 +1541,7 @@ async function sendChat() {
   if (!message || btn.disabled) return;
 
   input.value = '';
+  autoResizeTextarea(input);
   btn.disabled = true;
   appendBubble('user', message);
   const typing = appendBubble('ai', '思考中...', true);
@@ -1497,6 +1579,10 @@ async function sendChat() {
 document.getElementById('inputTicker').addEventListener('keydown', e => { if (e.key === 'Enter') addStock(); });
 document.getElementById('authPassword').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
 document.getElementById('regPassword2').addEventListener('keydown', e => { if (e.key === 'Enter') register(); });
+document.getElementById('chatInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
+document.getElementById('chatInput').addEventListener('input', function() { autoResizeTextarea(this); });
 
 // 恢复颜色偏好
 if (localStorage.getItem('colorMode') === 'cn') {

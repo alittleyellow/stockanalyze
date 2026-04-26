@@ -246,7 +246,7 @@ async function callAI({ system, messages, maxTokens = 600, model }) {
 }
 
 // AI 聊天 — 每日次数限制
-const DAILY_CHAT_LIMIT = parseInt(process.env.DAILY_CHAT_LIMIT || '10');
+const DAILY_CHAT_LIMIT = parseInt(process.env.DAILY_CHAT_LIMIT || '50');
 
 app.get('/api/chat/remaining', requireAuth, (req, res) => {
   const db = loadDB();
@@ -284,9 +284,9 @@ app.post('/api/chat', requireAuth, async (req, res) => {
 
   try {
     const text = await callAI({
-      system: `你是专业的股票投资顾问。${portfolioCtx}。请用中文简洁回答，聚焦投资、股票、市场分析话题。`,
+      system: `你是 Claude，一个由 Anthropic 开发的 AI 助手，博学多才，可以回答任何话题的问题。你也了解用户的投资组合：${portfolioCtx}。请用中文回答，语言简洁清晰。`,
       messages,
-      maxTokens: 600,
+      maxTokens: 1500,
     });
     res.json({ text, remaining });
   } catch (e) {
