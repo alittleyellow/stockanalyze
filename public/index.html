@@ -564,6 +564,147 @@
     border-radius: 4px;
   }
 
+  /* Chat */
+  .chat-fab {
+    position: fixed;
+    bottom: 1.8rem;
+    right: 1.8rem;
+    z-index: 150;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 50px;
+    padding: 0.65rem 1.1rem;
+    font-family: 'Syne', sans-serif;
+    font-size: 0.82rem;
+    font-weight: 500;
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    gap: 0.45rem;
+    box-shadow: 0 4px 24px rgba(124,111,255,0.4);
+    transition: all 0.15s;
+  }
+  .chat-fab:hover { background: #6a5fff; transform: translateY(-2px); }
+  .chat-fab-badge {
+    background: rgba(255,255,255,0.2);
+    border-radius: 20px;
+    padding: 1px 7px;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.68rem;
+  }
+
+  .chat-panel {
+    position: fixed;
+    bottom: 5.2rem;
+    right: 1.8rem;
+    width: 360px;
+    max-height: 520px;
+    background: var(--bg2);
+    border: 0.5px solid var(--border2);
+    border-radius: 18px;
+    display: none;
+    flex-direction: column;
+    z-index: 150;
+    box-shadow: 0 12px 48px rgba(0,0,0,0.5);
+    overflow: hidden;
+  }
+  .chat-panel.open { display: flex; }
+
+  .chat-panel-header {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.9rem 1.2rem;
+    border-bottom: 0.5px solid var(--border);
+  }
+  .chat-panel-header h4 { font-size: 0.88rem; font-weight: 600; flex: 1; margin: 0; }
+  .chat-quota {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--muted);
+    background: var(--bg3);
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    max-height: 350px;
+  }
+
+  .chat-bubble {
+    max-width: 86%;
+    font-size: 0.82rem;
+    line-height: 1.65;
+    padding: 0.6rem 0.85rem;
+    border-radius: 14px;
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+  .chat-bubble-user {
+    align-self: flex-end;
+    background: var(--accent);
+    color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+  .chat-bubble-ai {
+    align-self: flex-start;
+    background: var(--bg3);
+    color: var(--text);
+    border: 0.5px solid var(--border);
+    border-bottom-left-radius: 4px;
+  }
+  .chat-bubble-system {
+    align-self: center;
+    background: rgba(231,76,60,0.1);
+    color: var(--red);
+    border: 0.5px solid rgba(231,76,60,0.25);
+    font-size: 0.75rem;
+    text-align: center;
+  }
+  .chat-bubble-typing { color: var(--muted); font-style: italic; }
+
+  .chat-input-row {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.75rem 0.9rem;
+    border-top: 0.5px solid var(--border);
+  }
+  .chat-input-row input {
+    flex: 1;
+    background: var(--bg3);
+    border: 0.5px solid var(--border2);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    font-size: 0.82rem;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .chat-input-row input:focus { border-color: var(--accent); }
+  .chat-send {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 0.5rem 0.85rem;
+    font-family: 'Syne', sans-serif;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+  .chat-send:hover { background: #6a5fff; }
+  .chat-send:disabled { opacity: 0.45; cursor: not-allowed; }
+
   .tag-row { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.4rem; }
 
   .empty-state {
@@ -710,6 +851,29 @@
   </div>
 </div>
 
+
+<!-- Chat FAB -->
+<button class="chat-fab" id="chatFab" onclick="toggleChat()">
+  <span>💬</span>
+  <span>AI 问答</span>
+  <span class="chat-fab-badge" id="chatFabBadge"></span>
+</button>
+
+<!-- Chat Panel -->
+<div class="chat-panel" id="chatPanel">
+  <div class="chat-panel-header">
+    <h4>AI 股票顾问</h4>
+    <span class="chat-quota" id="chatQuota">加载中...</span>
+    <button onclick="toggleChat()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem;padding:0 0 0 0.4rem;line-height:1">✕</button>
+  </div>
+  <div class="chat-messages" id="chatMessages">
+    <div class="chat-bubble chat-bubble-ai">你好！我是你的 AI 投资顾问，可以问我关于持仓分析、市场动态、选股策略等问题 📊</div>
+  </div>
+  <div class="chat-input-row">
+    <input type="text" id="chatInput" placeholder="问我关于股票的任何问题..." maxlength="500">
+    <button class="chat-send" id="chatSendBtn" onclick="sendChat()">发送</button>
+  </div>
+</div>
 
 <!-- Auth Screen -->
 <div id="authScreen" class="auth-screen">
@@ -1185,6 +1349,7 @@ async function login() {
   await loadHoldings();
   document.getElementById('authScreen').style.display = 'none';
   document.getElementById('currentUserBadge').textContent = currentUser;
+  document.getElementById('chatFab').style.display = 'flex';
 }
 
 async function register() {
@@ -1230,6 +1395,86 @@ async function loadHoldings() {
     if (holdings.length) fetchPrices();
   }
 }
+
+// ── Chat ──────────────────────────────────────────
+let chatHistory = [];
+let chatRemaining = null;
+
+async function initChatRemaining() {
+  try {
+    const res = await fetch('/api/chat/remaining');
+    if (res.status === 401) return;
+    const data = await res.json();
+    chatRemaining = data.remaining;
+    updateChatQuota();
+  } catch {}
+}
+
+function updateChatQuota() {
+  if (chatRemaining === null) return;
+  document.getElementById('chatQuota').textContent = `今日剩余 ${chatRemaining} 次`;
+  document.getElementById('chatFabBadge').textContent = chatRemaining;
+}
+
+function toggleChat() {
+  const panel = document.getElementById('chatPanel');
+  panel.classList.toggle('open');
+  if (panel.classList.contains('open')) {
+    if (chatRemaining === null) initChatRemaining();
+    document.getElementById('chatInput').focus();
+  }
+}
+
+function appendBubble(role, text) {
+  const wrap = document.getElementById('chatMessages');
+  const el = document.createElement('div');
+  el.className = `chat-bubble chat-bubble-${role}`;
+  el.textContent = text;
+  wrap.appendChild(el);
+  wrap.scrollTop = wrap.scrollHeight;
+  return el;
+}
+
+async function sendChat() {
+  const input = document.getElementById('chatInput');
+  const btn = document.getElementById('chatSendBtn');
+  const message = input.value.trim();
+  if (!message || btn.disabled) return;
+
+  input.value = '';
+  btn.disabled = true;
+  appendBubble('user', message);
+  const typing = appendBubble('ai', '思考中...', true);
+  typing.classList.add('chat-bubble-typing');
+
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, history: chatHistory }),
+    });
+    const data = await res.json();
+    typing.remove();
+
+    if (res.status === 401) { handleSessionExpiry(); return; }
+    if (res.status === 429 || data.error) { appendBubble('system', data.error || '发送失败'); return; }
+
+    chatHistory.push({ role: 'user', content: message });
+    chatHistory.push({ role: 'assistant', content: data.text });
+    if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
+
+    appendBubble('ai', data.text);
+    chatRemaining = data.remaining;
+    updateChatQuota();
+  } catch {
+    typing.remove();
+    appendBubble('system', '网络错误，请重试');
+  } finally {
+    btn.disabled = false;
+    input.focus();
+  }
+}
+// ──────────────────────────────────────────────────
 
 document.getElementById('inputTicker').addEventListener('keydown', e => { if (e.key === 'Enter') addStock(); });
 document.getElementById('authPassword').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });

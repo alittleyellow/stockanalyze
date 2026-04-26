@@ -122,12 +122,31 @@ app.get('/api/quote/:ticker', requireAuth, async (req, res) => {
   }
 });
 
-// 获取历史数据（走势图）—— 使用 Stooq，无需 API key
+// 获取历史数据（走势图）—— Finnhub 优先，stooq 备用
 app.get('/api/history/:ticker', requireAuth, async (req, res) => {
   const { ticker } = req.params;
-  const toDate = new Date().toISOString().split('T')[0].replace(/-/g, '');
-  const fromDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString().split('T')[0].replace(/-/g, '');
+  const to = Math.floor(Date.now() / 1000);
+  const from = to - 31 * 24 * 60 * 60;
+
+  // 优先：Finnhub candles（跟现价同一 API，云服务器可靠）
   try {
+    const data = await finnhub(`/stock/candle?symbol=${ticker}&resolution=D&from=${from}&to=${to}`);
+    if (data.s === 'ok' && Array.isArray(data.c) && data.c.length > 0) {
+      const history = data.t.map((t, i) => ({
+        date: new Date(t * 1000).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }),
+        price: data.c[i],
+      })).filter(x => x.price > 0);
+      return res.json(history);
+    }
+    console.log(`Finnhub candle ${ticker}: s=${data.s}, points=${data.c?.length ?? 0}`);
+  } catch (e) {
+    console.error(`Finnhub candle ${ticker}:`, e.message);
+  }
+
+  // 备用：stooq CSV
+  try {
+    const toDate = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    const fromDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString().split('T')[0].replace(/-/g, '');
     const url = `https://stooq.com/q/d/l/?s=${ticker.toUpperCase()}.US&d1=${fromDate}&d2=${toDate}&i=d`;
     const r = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
@@ -135,30 +154,32 @@ app.get('/api/history/:ticker', requireAuth, async (req, res) => {
     });
     if (!r.ok) throw new Error(`stooq ${r.status}`);
     const csv = await r.text();
+    console.log(`Stooq ${ticker} raw(200):`, csv.substring(0, 200));
 
     const lines = csv.split('\n').filter(l => l.trim());
     if (lines.length < 2) return res.json([]);
-
-    // 从 header 动态找 Close 列，避免列序不同导致解析错误
     const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-    const dateIdx = headers.indexOf('date');
     const closeIdx = headers.indexOf('close');
-    if (closeIdx === -1) return res.json([]);
+    if (closeIdx === -1) {
+      console.error(`Stooq ${ticker} no close col, headers:`, headers);
+      return res.json([]);
+    }
 
     const history = lines.slice(1).map(line => {
       const parts = line.split(',');
-      const dateStr = parts[dateIdx >= 0 ? dateIdx : 0]?.trim();
+      const dateStr = parts[0]?.trim();
       const close = parseFloat(parts[closeIdx]);
-      if (!dateStr || isNaN(close) || close < 0.01) return null;
+      if (!dateStr || isNaN(close) || close < 0.5) return null;
       return {
         date: new Date(dateStr).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }),
         price: close,
       };
     }).filter(Boolean);
 
-    res.json(history);
+    return res.json(history);
   } catch (e) {
-    res.status(502).json({ error: e.message });
+    console.error(`Stooq ${ticker}:`, e.message);
+    res.status(502).json({ error: '历史数据暂时不可用' });
   }
 });
 
@@ -201,6 +222,64 @@ app.get('/api/news', requireAuth, async (req, res) => {
       }));
     res.json(news);
   } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// AI 聊天 — 每日次数限制
+const DAILY_CHAT_LIMIT = parseInt(process.env.DAILY_CHAT_LIMIT || '10');
+
+app.get('/api/chat/remaining', requireAuth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.session.userId];
+  const today = new Date().toDateString();
+  if (!user.chatUsage || user.chatUsage.date !== today) return res.json({ remaining: DAILY_CHAT_LIMIT });
+  res.json({ remaining: Math.max(0, DAILY_CHAT_LIMIT - user.chatUsage.count) });
+});
+
+app.post('/api/chat', requireAuth, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: '服务器未配置 API Key' });
+
+  const { message, history } = req.body;
+  if (!message?.trim()) return res.status(400).json({ error: '消息不能为空' });
+
+  const db = loadDB();
+  const user = db.users[req.session.userId];
+  const today = new Date().toDateString();
+
+  if (!user.chatUsage || user.chatUsage.date !== today) user.chatUsage = { date: today, count: 0 };
+  if (user.chatUsage.count >= DAILY_CHAT_LIMIT) {
+    return res.status(429).json({ error: `今日 ${DAILY_CHAT_LIMIT} 次已用完，明天再来 😊`, remaining: 0 });
+  }
+
+  user.chatUsage.count++;
+  saveDB(db);
+  const remaining = DAILY_CHAT_LIMIT - user.chatUsage.count;
+
+  const portfolioCtx = user.holdings?.length
+    ? '用户持仓：' + user.holdings.map(h => `${h.ticker} ${h.shares}股 成本$${h.cost}`).join('，')
+    : '用户暂无持仓';
+
+  const messages = [...(Array.isArray(history) ? history.slice(-10) : []), { role: 'user', content: message }];
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 600,
+        system: `你是专业的股票投资顾问。${portfolioCtx}。请用中文简洁回答，聚焦投资、股票、市场分析话题。`,
+        messages,
+      }),
+    });
+    const data = await response.json();
+    if (data.error) throw new Error(data.error.message);
+    res.json({ text: data.content?.[0]?.text || '', remaining });
+  } catch (e) {
+    user.chatUsage.count--;
+    saveDB(db);
     res.status(502).json({ error: e.message });
   }
 });
