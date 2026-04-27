@@ -211,12 +211,20 @@ app.get('/api/news', requireAuth, async (req, res) => {
 });
 
 // AI 统一调用helper — 优先 OpenAI，备用 Anthropic
-async function callAI({ system, messages, maxTokens = 600, model }) {
+async function callAI({ system, messages, maxTokens = 600, model, forceProvider }) {
   const openaiKey = process.env.OPENAI_API_KEY;
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
 
-  if (openaiKey) {
-    const finalModel = model || process.env.CHAT_MODEL || 'gpt-4o-mini';
+  const useOpenAI = forceProvider === 'openai' ? !!openaiKey :
+                    forceProvider === 'anthropic' ? false : !!openaiKey;
+  const useAnthropic = forceProvider === 'anthropic' ? !!anthropicKey :
+                       forceProvider === 'openai' ? false : (!openaiKey && !!anthropicKey);
+
+  if (forceProvider === 'openai' && !openaiKey) throw new Error('未配置 OPENAI_API_KEY');
+  if (forceProvider === 'anthropic' && !anthropicKey) throw new Error('未配置 ANTHROPIC_API_KEY');
+
+  if (useOpenAI) {
+    const finalModel = model || (forceProvider === 'openai' ? 'gpt-4o' : (process.env.CHAT_MODEL || 'gpt-4o-mini'));
     const fullMessages = system ? [{ role: 'system', content: system }, ...messages] : messages;
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -229,8 +237,8 @@ async function callAI({ system, messages, maxTokens = 600, model }) {
     return data.choices?.[0]?.message?.content || '';
   }
 
-  if (anthropicKey) {
-    const finalModel = model || process.env.CHAT_MODEL || 'claude-sonnet-4-6';
+  if (useAnthropic) {
+    const finalModel = model || (forceProvider === 'anthropic' ? 'claude-sonnet-4-6' : (process.env.CHAT_MODEL || 'claude-sonnet-4-6'));
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': anthropicKey, 'anthropic-version': '2023-06-01' },
@@ -300,15 +308,16 @@ app.post('/api/chat', requireAuth, async (req, res) => {
 app.post('/api/analyze', requireAuth, async (req, res) => {
   if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY)
     return res.status(503).json({ error: '服务器未配置 AI API Key' });
-  const { prompt } = req.body;
+  const { prompt, provider } = req.body;
   if (!prompt) return res.status(400).json({ error: '缺少 prompt' });
   try {
     const analyzeModel = process.env.ANALYZE_MODEL ||
-      (process.env.OPENAI_API_KEY ? 'gpt-4o' : 'claude-opus-4-7');
+      (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o');
     const text = await callAI({
       messages: [{ role: 'user', content: prompt }],
       maxTokens: 4000,
       model: analyzeModel,
+      forceProvider: provider,
     });
     res.json({ text });
   } catch (e) {

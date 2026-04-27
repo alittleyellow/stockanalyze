@@ -354,6 +354,30 @@
     color: var(--muted);
   }
 
+  .provider-toggle {
+    display: flex;
+    gap: 0;
+    border: 0.5px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .provider-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.65rem;
+    padding: 3px 10px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .provider-btn:first-child { border-right: 0.5px solid var(--border); }
+  .provider-btn.active {
+    background: rgba(124,111,255,0.15);
+    color: var(--accent);
+  }
+  .provider-btn:hover:not(.active) { background: rgba(255,255,255,0.04); }
+
   /* News */
   .news-card { background: var(--bg2); border: 0.5px solid var(--border); border-radius: var(--card-radius); }
 
@@ -845,7 +869,10 @@
       <div class="ai-card fade-in" style="animation-delay:0.15s">
         <div class="card-header">
           <h2>AI 分析</h2>
-          <span class="ai-badge">AI</span>
+          <div class="provider-toggle">
+            <button class="provider-btn active" id="btnOpenAI" onclick="setAnalyzeProvider('openai')">OpenAI</button>
+            <button class="provider-btn" id="btnClaude" onclick="setAnalyzeProvider('anthropic')">Claude</button>
+          </div>
         </div>
         <div class="ai-content" id="aiContent">
           <span style="color:var(--muted);font-size:0.82rem">添加股票后，AI 将每天自动分析你的持仓并给出买入/卖出建议。</span>
@@ -1303,6 +1330,15 @@ function getTimeAgo(ts) {
   return day + '天前';
 }
 
+let analyzeProvider = 'openai';
+
+function setAnalyzeProvider(p) {
+  analyzeProvider = p;
+  document.getElementById('btnOpenAI').classList.toggle('active', p === 'openai');
+  document.getElementById('btnClaude').classList.toggle('active', p === 'anthropic');
+  runAnalysis();
+}
+
 function checkAndRunAnalysis() {
   if (!holdings.length) return;
   const today = new Date().toDateString();
@@ -1348,7 +1384,7 @@ ${portfolioData}
     const res = await fetch('/api/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt })
+      body: JSON.stringify({ prompt, provider: analyzeProvider })
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
