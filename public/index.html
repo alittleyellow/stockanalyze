@@ -845,7 +845,7 @@
       <div class="ai-card fade-in" style="animation-delay:0.15s">
         <div class="card-header">
           <h2>AI 分析</h2>
-          <span class="ai-badge">Claude</span>
+          <span class="ai-badge">AI</span>
         </div>
         <div class="ai-content" id="aiContent">
           <span style="color:var(--muted);font-size:0.82rem">添加股票后，AI 将每天自动分析你的持仓并给出买入/卖出建议。</span>
@@ -1316,7 +1316,7 @@ function checkAndRunAnalysis() {
 async function runAnalysis() {
   if (!holdings.length) return;
   const aiEl = document.getElementById('aiContent');
-  aiEl.innerHTML = '<div class="loading"><span class="spinner"></span> Claude 正在分析你的持仓...</div>';
+  aiEl.innerHTML = '<div class="loading"><span class="spinner"></span> AI 正在分析你的持仓...</div>';
   aiEl.className = 'ai-content loading';
 
   const portfolioData = holdings.map(h => {
@@ -1330,12 +1330,19 @@ async function runAnalysis() {
 
 ${portfolioData}
 
-请用中文简洁分析：
-1. 整体持仓健康度评估
-2. 每只股票给出 [买入] [持有] 或 [卖出] 信号，并简述原因（1-2句话）
-3. 最重要的一个风险提示
+请用中文分析，严格按照以下格式输出，不要有多余的开场白：
 
-格式：直接输出分析，不要有多余的开场白。每只股票用单独一行。`;
+**整体持仓评估**
+（2-3句话评估整体健康度、分散度、盈亏情况）
+
+**个股建议**
+对每只股票单独一段，格式如下：
+[股票代码] [买入] / [持有] / [卖出]
+• 建议理由：（结合当前盈亏、行业趋势、估值，2-3句话）
+• 操作建议：（具体操作，如"可在当前价位分批加仓"、"建议止盈50%"、"设置止损位$xxx"等）
+
+**风险提示**
+（列出1-2条最需要关注的风险）`;
 
   try {
     const res = await fetch('/api/analyze', {
@@ -1495,7 +1502,7 @@ function toggleChat() {
 function clearChat() {
   chatHistory = [];
   const wrap = document.getElementById('chatMessages');
-  wrap.innerHTML = '<div class="chat-bubble chat-bubble-ai">你好！我是 Claude，有什么可以帮你的？可以聊股票、编程、写作，或任何话题 ✦</div>';
+  wrap.innerHTML = '<div class="chat-bubble chat-bubble-ai">你好！有什么可以帮你的？可以聊股票、编程、写作，或任何话题 ✦</div>';
 }
 
 function renderMarkdown(text) {
