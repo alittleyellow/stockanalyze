@@ -280,13 +280,13 @@ app.post('/api/chat', requireAuth, async (req, res) => {
     ? '用户持仓：' + user.holdings.map(h => `${h.ticker} ${h.shares}股 成本$${h.cost}`).join('，')
     : '用户暂无持仓';
 
-  const messages = [...(Array.isArray(history) ? history.slice(-10) : []), { role: 'user', content: message }];
+  const messages = [...(Array.isArray(history) ? history : []), { role: 'user', content: message }];
 
   try {
     const text = await callAI({
       system: `你是一个博学多才的 AI 助手，可以回答任何话题的问题。你也了解用户的投资组合：${portfolioCtx}。请用中文回答，语言简洁清晰。`,
       messages,
-      maxTokens: 1500,
+      maxTokens: 16000,
     });
     res.json({ text, remaining });
   } catch (e) {
@@ -307,7 +307,7 @@ app.post('/api/analyze', requireAuth, async (req, res) => {
       (process.env.OPENAI_API_KEY ? 'gpt-4o' : 'claude-opus-4-7');
     const text = await callAI({
       messages: [{ role: 'user', content: prompt }],
-      maxTokens: 800,
+      maxTokens: 4000,
       model: analyzeModel,
     });
     res.json({ text });
