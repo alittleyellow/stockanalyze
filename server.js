@@ -4,56 +4,17 @@ const cors = require('cors');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const session = require('express-session');
-const Database = require('better-sqlite3');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DB_FILE = process.env.DB_PATH || path.join(__dirname, 'db.sqlite');
+const DB_FILE = process.env.DB_PATH || path.join(__dirname, 'db.json');
 
-// ── SQLite 初始化 ──────────────────────────────────
-const db = new Database(DB_FILE);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    username TEXT PRIMARY KEY,
-    password_hash TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS holdings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
-    ticker TEXT NOT NULL,
-    name TEXT NOT NULL,
-    shares REAL NOT NULL,
-    cost REAL NOT NULL,
-    sector TEXT NOT NULL DEFAULT '未分类',
-    added_at INTEGER NOT NULL,
-    UNIQUE(username, ticker)
-  );
-
-  CREATE TABLE IF NOT EXISTS chat_usage (
-    username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
-    date TEXT NOT NULL,
-    count INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (username, date)
-  );
-`);
-
-// ── DB helpers ─────────────────────────────────────
-const stmt = {
-  getUser:      db.prepare('SELECT * FROM users WHERE username = ?'),
-  insertUser:   db.prepare('INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)'),
-  getHoldings:  db.prepare('SELECT * FROM holdings WHERE username = ? ORDER BY added_at ASC'),
-  insertHolding:db.prepare('INSERT INTO holdings (username, ticker, name, shares, cost, sector, added_at) VALUES (?, ?, ?, ?, ?, ?, ?)'),
-  updateHolding:db.prepare('UPDATE holdings SET name=?, shares=?, cost=?, sector=? WHERE username=? AND ticker=?'),
-  deleteHolding:db.prepare('DELETE FROM holdings WHERE username=? AND ticker=?'),
-  getChatUsage: db.prepare('SELECT count FROM chat_usage WHERE username=? AND date=?'),
-  upsertChat:   db.prepare('INSERT INTO chat_usage (username, date, count) VALUES (?,?,1) ON CONFLICT(username,date) DO UPDATE SET count=count+1'),
-  decChat:      db.prepare('UPDATE chat_usage SET count=count-1 WHERE username=? AND date=?'),
-};
+function loadDB() {
+  if (!fs.existsSync(DB_FILE)) return { users: {} };
+  try { return JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch { return { users: {} }; }
+}
+function saveDB(db) { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); }
 
 // Finnhub API helper
 const FINNHUB_KEY = process.env.FINNHUB_API_KEY || '';
@@ -86,9 +47,11 @@ app.post('/api/register', async (req, res) => {
   if (!username || !password) return res.status(400).json({ error: '请填写用户名和密码' });
   if (username.length < 2) return res.status(400).json({ error: '用户名至少2个字符' });
   if (password.length < 6) return res.status(400).json({ error: '密码至少6位' });
-  if (stmt.getUser.get(username)) return res.status(409).json({ error: '用户名已存在' });
+  const db = loadDB();
+  if (db.users[username]) return res.status(409).json({ error: '用户名已存在' });
   const hash = await bcrypt.hash(password, 10);
-  stmt.insertUser.run(username, hash, Date.now());
+  db.users[username] = { password: hash, holdings: [], createdAt: Date.now() };
+  saveDB(db);
   req.session.userId = username;
   res.json({ username });
 });
@@ -97,9 +60,10 @@ app.post('/api/register', async (req, res) => {
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) return res.status(400).json({ error: '请填写用户名和密码' });
-  const user = stmt.getUser.get(username);
+  const db = loadDB();
+  const user = db.users[username];
   if (!user) return res.status(401).json({ error: '用户名或密码错误' });
-  const ok = await bcrypt.compare(password, user.password_hash);
+  const ok = await bcrypt.compare(password, user.password);
   if (!ok) return res.status(401).json({ error: '用户名或密码错误' });
   req.session.userId = username;
   res.json({ username });
@@ -119,29 +83,31 @@ app.get('/api/me', (req, res) => {
 
 // 获取持仓
 app.get('/api/holdings', requireAuth, (req, res) => {
-  const rows = stmt.getHoldings.all(req.session.userId);
-  res.json(rows.map(r => ({ ticker: r.ticker, name: r.name, shares: r.shares, cost: r.cost, sector: r.sector, addedAt: r.added_at })));
+  const db = loadDB();
+  res.json(db.users[req.session.userId]?.holdings || []);
 });
 
 // 添加持仓
 app.post('/api/holdings', requireAuth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.session.userId];
+  if (!user) return res.status(401).json({ error: '用户不存在' });
   const { ticker, name, shares, cost, sector } = req.body;
   if (!ticker || !shares || !cost) return res.status(400).json({ error: '参数不完整' });
-  try {
-    stmt.insertHolding.run(req.session.userId, ticker, name || ticker, shares, cost, sector || '未分类', Date.now());
-  } catch (e) {
-    if (e.code === 'SQLITE_CONSTRAINT_UNIQUE') return res.status(409).json({ error: '该股票已在持仓中' });
-    throw e;
-  }
-  const rows = stmt.getHoldings.all(req.session.userId);
-  res.json(rows.map(r => ({ ticker: r.ticker, name: r.name, shares: r.shares, cost: r.cost, sector: r.sector, addedAt: r.added_at })));
+  if (user.holdings.find(h => h.ticker === ticker)) return res.status(409).json({ error: '该股票已在持仓中' });
+  user.holdings.push({ ticker, name: name || ticker, shares, cost, sector: sector || '未分类', addedAt: Date.now() });
+  saveDB(db);
+  res.json(user.holdings);
 });
 
 // 删除持仓
 app.delete('/api/holdings/:ticker', requireAuth, (req, res) => {
-  stmt.deleteHolding.run(req.session.userId, req.params.ticker);
-  const rows = stmt.getHoldings.all(req.session.userId);
-  res.json(rows.map(r => ({ ticker: r.ticker, name: r.name, shares: r.shares, cost: r.cost, sector: r.sector, addedAt: r.added_at })));
+  const db = loadDB();
+  const user = db.users[req.session.userId];
+  if (!user) return res.status(401).json({ error: '用户不存在' });
+  user.holdings = user.holdings.filter(h => h.ticker !== req.params.ticker);
+  saveDB(db);
+  res.json(user.holdings);
 });
 
 // 获取股票现价
@@ -203,20 +169,18 @@ app.get('/api/history/:ticker', requireAuth, async (req, res) => {
 
 // 编辑持仓
 app.put('/api/holdings/:ticker', requireAuth, (req, res) => {
-  const username = req.session.userId;
-  const rows = stmt.getHoldings.all(username);
-  const h = rows.find(r => r.ticker === req.params.ticker);
+  const db = loadDB();
+  const user = db.users[req.session.userId];
+  if (!user) return res.status(401).json({ error: '用户不存在' });
+  const h = user.holdings.find(h => h.ticker === req.params.ticker);
   if (!h) return res.status(404).json({ error: '持仓不存在' });
   const { name, shares, cost, sector } = req.body;
-  stmt.updateHolding.run(
-    name !== undefined ? (name || req.params.ticker) : h.name,
-    shares !== undefined ? shares : h.shares,
-    cost !== undefined ? cost : h.cost,
-    sector !== undefined ? (sector || '未分类') : h.sector,
-    username, req.params.ticker
-  );
-  const updated = stmt.getHoldings.all(username);
-  res.json(updated.map(r => ({ ticker: r.ticker, name: r.name, shares: r.shares, cost: r.cost, sector: r.sector, addedAt: r.added_at })));
+  if (name !== undefined) h.name = name || req.params.ticker;
+  if (shares !== undefined) h.shares = shares;
+  if (cost !== undefined) h.cost = cost;
+  if (sector !== undefined) h.sector = sector || '未分类';
+  saveDB(db);
+  res.json(user.holdings);
 });
 
 // 获取新闻
@@ -285,9 +249,11 @@ async function callAI({ system, messages, maxTokens = 600, model }) {
 const DAILY_CHAT_LIMIT = parseInt(process.env.DAILY_CHAT_LIMIT || '50');
 
 app.get('/api/chat/remaining', requireAuth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.session.userId];
   const today = new Date().toDateString();
-  const row = stmt.getChatUsage.get(req.session.userId, today);
-  res.json({ remaining: Math.max(0, DAILY_CHAT_LIMIT - (row?.count || 0)) });
+  if (!user.chatUsage || user.chatUsage.date !== today) return res.json({ remaining: DAILY_CHAT_LIMIT });
+  res.json({ remaining: Math.max(0, DAILY_CHAT_LIMIT - user.chatUsage.count) });
 });
 
 app.post('/api/chat', requireAuth, async (req, res) => {
@@ -297,21 +263,21 @@ app.post('/api/chat', requireAuth, async (req, res) => {
   const { message, history } = req.body;
   if (!message?.trim()) return res.status(400).json({ error: '消息不能为空' });
 
-  const username = req.session.userId;
+  const db = loadDB();
+  const user = db.users[req.session.userId];
   const today = new Date().toDateString();
-  const usageRow = stmt.getChatUsage.get(username, today);
-  const usedCount = usageRow?.count || 0;
 
-  if (usedCount >= DAILY_CHAT_LIMIT) {
+  if (!user.chatUsage || user.chatUsage.date !== today) user.chatUsage = { date: today, count: 0 };
+  if (user.chatUsage.count >= DAILY_CHAT_LIMIT) {
     return res.status(429).json({ error: `今日 ${DAILY_CHAT_LIMIT} 次已用完，明天再来 😊`, remaining: 0 });
   }
 
-  stmt.upsertChat.run(username, today);
-  const remaining = DAILY_CHAT_LIMIT - usedCount - 1;
+  user.chatUsage.count++;
+  saveDB(db);
+  const remaining = DAILY_CHAT_LIMIT - user.chatUsage.count;
 
-  const holdings = stmt.getHoldings.all(username);
-  const portfolioCtx = holdings.length
-    ? '用户持仓：' + holdings.map(h => `${h.ticker} ${h.shares}股 成本$${h.cost}`).join('，')
+  const portfolioCtx = user.holdings?.length
+    ? '用户持仓：' + user.holdings.map(h => `${h.ticker} ${h.shares}股 成本$${h.cost}`).join('，')
     : '用户暂无持仓';
 
   const messages = [...(Array.isArray(history) ? history.slice(-10) : []), { role: 'user', content: message }];
@@ -324,7 +290,8 @@ app.post('/api/chat', requireAuth, async (req, res) => {
     });
     res.json({ text, remaining });
   } catch (e) {
-    stmt.decChat.run(username, today);
+    user.chatUsage.count--;
+    saveDB(db);
     res.status(502).json({ error: e.message });
   }
 });
