@@ -284,7 +284,7 @@ app.post('/api/chat', requireAuth, async (req, res) => {
 
   try {
     const text = await callAI({
-      system: `你是 Claude，一个由 Anthropic 开发的 AI 助手，博学多才，可以回答任何话题的问题。你也了解用户的投资组合：${portfolioCtx}。请用中文回答，语言简洁清晰。`,
+      system: `你是一个博学多才的 AI 助手，可以回答任何话题的问题。你也了解用户的投资组合：${portfolioCtx}。请用中文回答，语言简洁清晰。`,
       messages,
       maxTokens: 1500,
     });
@@ -313,6 +313,19 @@ app.post('/api/analyze', requireAuth, async (req, res) => {
     res.json({ text });
   } catch (e) {
     res.status(502).json({ error: e.message });
+  }
+});
+
+// 当前 AI provider 信息
+app.get('/api/ai-info', requireAuth, (req, res) => {
+  const openaiKey = process.env.OPENAI_API_KEY;
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (openaiKey) {
+    res.json({ provider: 'OpenAI', model: process.env.CHAT_MODEL || 'gpt-4o-mini' });
+  } else if (anthropicKey) {
+    res.json({ provider: 'Anthropic (Claude)', model: process.env.CHAT_MODEL || 'claude-sonnet-4-6' });
+  } else {
+    res.json({ provider: '未配置', model: null });
   }
 });
 
