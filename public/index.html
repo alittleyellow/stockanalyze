@@ -861,6 +861,11 @@
         <div class="chart-wrap">
           <canvas id="priceChart" height="120"></canvas>
         </div>
+        <div style="padding:1rem 1.4rem 0;display:flex;align-items:center;justify-content:space-between;gap:.6rem;flex-wrap:wrap">
+          <h3 style="font-size:.95rem;color:var(--fg);margin:0">个股 AI 分析</h3>
+          <button class="btn" id="stockAnalyzeBtn" onclick="runStockAnalysis(true)" style="padding:.3rem .8rem;font-size:.78rem">重新分析</button>
+        </div>
+        <div class="ai-content" id="stockAnalysisContent" style="padding:.6rem 1.4rem 1.2rem;font-size:.85rem;color:var(--muted)">选择上方个股后将自动生成分析…</div>
       </div>
     </div>
 
@@ -1038,6 +1043,8 @@ let priceCache = {};
 let chartInstance = null;
 let lastAnalysisDate = '';
 let lastAnalysis = '';
+let currentChartTicker = '';
+const stockAnalysisCache = {};
 let currentUser = null;
 let editTicker = null;
 
@@ -1274,6 +1281,8 @@ function renderTable() {
 async function showChart(ticker) {
   document.getElementById('chartCard').style.display = 'block';
   document.getElementById('chartTitle').textContent = ticker + ' 近30天走势';
+  currentChartTicker = ticker;
+  runStockAnalysis();
   const data = await fetchHistory(ticker);
   if (!data) return;
   if (chartInstance) chartInstance.destroy();
@@ -1304,6 +1313,82 @@ async function showChart(ticker) {
       }
     }
   });
+}
+
+async function runStockAnalysis(force = false) {
+  const ticker = currentChartTicker;
+  const el = document.getElementById('stockAnalysisContent');
+  if (!ticker || !el) return;
+  const h = holdings.find(x => x.ticker === ticker);
+  if (!h) { el.innerHTML = '<span style="color:var(--muted)">未找到该持仓。</span>'; return; }
+
+  const cacheKey = `${ticker}::${analyzeModel}`;
+  if (!force && stockAnalysisCache[cacheKey]) {
+    renderStockAnalysis(stockAnalysisCache[cacheKey]);
+    return;
+  }
+
+  const btn = document.getElementById('stockAnalyzeBtn');
+  btn.disabled = true;
+  el.innerHTML = '<div class="loading"><span class="spinner"></span> AI 正在分析 ' + ticker + '…</div>';
+
+  const d = priceCache[ticker] || {};
+  const price = d.price || 0;
+  const change = d.changePercent != null ? d.changePercent.toFixed(2) + '%' : 'N/A';
+  const pnlPct = price ? ((price - h.cost) / h.cost * 100).toFixed(1) + '%' : 'N/A';
+  const mktValue = price ? (price * h.shares).toFixed(2) : 'N/A';
+
+  const prompt = `你是一位专业的股票分析师。请针对下面这只个股做深度分析：
+
+股票：${ticker}（${h.name}）
+行业：${h.sector || '未知'}
+持股：${h.shares} 股
+成本价：$${h.cost}
+现价：$${price.toFixed ? price.toFixed(2) : price}
+今日涨跌：${change}
+市值：$${mktValue}
+持仓盈亏：${pnlPct}
+
+请用中文按以下格式输出，不要开场白：
+
+**基本面**
+（公司业务、护城河、近期业绩亮点或风险，3-4 句）
+
+**技术面 / 估值**
+（结合当前价位、近期走势和估值水平点评，2-3 句）
+
+**操作建议** [买入] / [持有] / [卖出]
+（具体动作：是否加仓、减仓、止盈位、止损位、建议持有时长，3-4 句）
+
+**关键风险**
+（1-2 条最值得关注的风险）`;
+
+  try {
+    const res = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, model: analyzeModel })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    stockAnalysisCache[cacheKey] = data.text || '';
+    if (currentChartTicker === ticker) renderStockAnalysis(stockAnalysisCache[cacheKey]);
+  } catch (e) {
+    el.innerHTML = '<span style="color:var(--red);font-size:0.82rem">分析失败: ' + e.message + '</span>';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderStockAnalysis(text) {
+  const el = document.getElementById('stockAnalysisContent');
+  if (!el) return;
+  const html = (text || '')
+    .replace(/\[买入\]/g, '<span class="signal buy">买入</span>')
+    .replace(/\[持有\]/g, '<span class="signal hold">持有</span>')
+    .replace(/\[卖出\]/g, '<span class="signal sell">卖出</span>')
+    .split('\n').filter(l => l.trim()).map(l => `<p>${l}</p>`).join('');
+  el.innerHTML = html || '<span style="color:var(--muted)">暂无分析结果。</span>';
 }
 
 async function fetchNews() {
@@ -1348,6 +1433,7 @@ function setAnalyzeModel(m) {
   document.getElementById('btnGpt5').classList.toggle('active', m === 'gpt-5');
   document.getElementById('btnGpt4').classList.toggle('active', m === 'gpt-4.1');
   runAnalysis();
+  if (currentChartTicker) runStockAnalysis();
 }
 
 function checkAndRunAnalysis() {
