@@ -9,12 +9,38 @@ const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DB_FILE = process.env.DB_PATH || path.join(__dirname, 'db.json');
+const SESSIONS_FILE = path.join(path.dirname(DB_FILE), 'sessions.json');
 
 function loadDB() {
   if (!fs.existsSync(DB_FILE)) return { users: {} };
   try { return JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch { return { users: {} }; }
 }
 function saveDB(db) { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); }
+
+// 文件持久化的 session 存储 — 防止重部署后用户被踢出
+class FileSessionStore extends session.Store {
+  _load() {
+    if (!fs.existsSync(SESSIONS_FILE)) return {};
+    try { return JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8')); } catch { return {}; }
+  }
+  _save(s) { try { fs.writeFileSync(SESSIONS_FILE, JSON.stringify(s)); } catch (e) { console.error('[sess]', e.message); } }
+  get(sid, cb) {
+    const all = this._load();
+    const s = all[sid];
+    if (!s) return cb(null, null);
+    if (s.expires && s.expires < Date.now()) { delete all[sid]; this._save(all); return cb(null, null); }
+    cb(null, s.data);
+  }
+  set(sid, data, cb) {
+    const all = this._load();
+    const expires = data.cookie?.expires ? new Date(data.cookie.expires).getTime() : Date.now() + 7*24*60*60*1000;
+    all[sid] = { data, expires };
+    this._save(all);
+    cb && cb(null);
+  }
+  destroy(sid, cb) { const all = this._load(); delete all[sid]; this._save(all); cb && cb(null); }
+  touch(sid, data, cb) { this.set(sid, data, cb); }
+}
 
 // Finnhub API helper
 const FINNHUB_KEY = process.env.FINNHUB_API_KEY || '';
@@ -29,6 +55,7 @@ async function finnhub(path) {
 app.use(cors());
 app.use(express.json());
 app.use(session({
+  store: new FileSessionStore(),
   secret: process.env.SESSION_SECRET || 'stock-app-secret',
   resave: false,
   saveUninitialized: false,
@@ -41,6 +68,35 @@ function requireAuth(req, res, next) {
   next();
 }
 
+function requireAdmin(req, res, next) {
+  if (!req.session.userId) return res.status(401).json({ error: '请先登录' });
+  const db = loadDB();
+  const user = db.users[req.session.userId];
+  if (!user || user.role !== 'admin') return res.status(403).json({ error: '需要管理员权限' });
+  next();
+}
+
+// 启动时确保管理员账户存在
+async function ensureAdmin() {
+  const username = process.env.ADMIN_USERNAME || 'admin';
+  const password = process.env.ADMIN_PASSWORD || 'admin123';
+  const db = loadDB();
+  if (!db.users[username]) {
+    db.users[username] = {
+      password: await bcrypt.hash(password, 10),
+      holdings: [],
+      role: 'admin',
+      createdAt: Date.now(),
+    };
+    saveDB(db);
+    console.log(`[admin] Created admin user: ${username}`);
+  } else if (db.users[username].role !== 'admin') {
+    db.users[username].role = 'admin';
+    saveDB(db);
+  }
+}
+ensureAdmin().catch(e => console.error('[admin]', e.message));
+
 // 注册
 app.post('/api/register', async (req, res) => {
   const { username, password } = req.body;
@@ -50,10 +106,10 @@ app.post('/api/register', async (req, res) => {
   const db = loadDB();
   if (db.users[username]) return res.status(409).json({ error: '用户名已存在' });
   const hash = await bcrypt.hash(password, 10);
-  db.users[username] = { password: hash, holdings: [], createdAt: Date.now() };
+  db.users[username] = { password: hash, holdings: [], role: 'user', createdAt: Date.now() };
   saveDB(db);
   req.session.userId = username;
-  res.json({ username });
+  res.json({ username, role: 'user' });
 });
 
 // 登录
@@ -66,7 +122,7 @@ app.post('/api/login', async (req, res) => {
   const ok = await bcrypt.compare(password, user.password);
   if (!ok) return res.status(401).json({ error: '用户名或密码错误' });
   req.session.userId = username;
-  res.json({ username });
+  res.json({ username, role: user.role || 'user' });
 });
 
 // 退出
@@ -78,7 +134,46 @@ app.post('/api/logout', (req, res) => {
 // 当前用户
 app.get('/api/me', (req, res) => {
   if (!req.session.userId) return res.json({ user: null });
-  res.json({ user: req.session.userId });
+  const db = loadDB();
+  const u = db.users[req.session.userId];
+  res.json({ user: req.session.userId, role: u?.role || 'user' });
+});
+
+// 管理员 — 用户列表
+app.get('/api/admin/users', requireAdmin, (req, res) => {
+  const db = loadDB();
+  const users = Object.entries(db.users).map(([username, u]) => ({
+    username,
+    role: u.role || 'user',
+    holdings: u.holdings?.length || 0,
+    chatCount: u.chatUsage?.count || 0,
+    createdAt: u.createdAt || null,
+  })).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  res.json(users);
+});
+
+// 管理员 — 删除用户
+app.delete('/api/admin/users/:username', requireAdmin, (req, res) => {
+  const target = req.params.username;
+  if (target === req.session.userId) return res.status(400).json({ error: '不能删除自己' });
+  const db = loadDB();
+  if (!db.users[target]) return res.status(404).json({ error: '用户不存在' });
+  if (db.users[target].role === 'admin') return res.status(400).json({ error: '不能删除管理员账户' });
+  delete db.users[target];
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+// 管理员 — 重置密码
+app.post('/api/admin/users/:username/reset-password', requireAdmin, async (req, res) => {
+  const target = req.params.username;
+  const { password } = req.body;
+  if (!password || password.length < 6) return res.status(400).json({ error: '密码至少6位' });
+  const db = loadDB();
+  if (!db.users[target]) return res.status(404).json({ error: '用户不存在' });
+  db.users[target].password = await bcrypt.hash(password, 10);
+  saveDB(db);
+  res.json({ ok: true });
 });
 
 // 获取持仓
