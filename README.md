@@ -8,7 +8,7 @@
 - **持仓管理** — 添加、编辑、删除股票持仓，自动计算市值、盈亏
 - **实时行情** — 每5分钟自动刷新现价和今日涨跌幅
 - **30天走势图** — 点击任意股票查看近30天价格走势
-- **AI 分析** — 由 Claude 每日自动分析持仓健康度，给出买入/持有/卖出信号
+- **AI 分析** — 由 GPT 每日自动分析持仓健康度，支持 GPT-5 / GPT-4.1 模型切换对比
 - **行业动态** — 显示持仓相关的最新财经新闻
 - **多用户** — 注册登录，每个用户数据独立隔离
 
@@ -20,7 +20,7 @@
 | 前端 | 原生 HTML / CSS / JavaScript |
 | 行情数据 | [Finnhub](https://finnhub.io)（现价、新闻） |
 | 历史数据 | [Stooq](https://stooq.com)（30天走势） |
-| AI 分析 | [Anthropic Claude](https://anthropic.com) |
+| AI 分析 | [OpenAI GPT-5 / GPT-4.1](https://openai.com) |
 | 部署 | [Railway](https://railway.app) |
 | 数据存储 | JSON 文件（Railway Volume 持久化） |
 
@@ -40,7 +40,7 @@ npm install
 
 ```env
 FINNHUB_API_KEY=你的Finnhub密钥
-ANTHROPIC_API_KEY=你的Anthropic密钥
+OPENAI_API_KEY=你的OpenAI密钥
 SESSION_SECRET=任意随机字符串
 ```
 
@@ -66,7 +66,7 @@ git push origin main
 
 ```
 FINNHUB_API_KEY    = 你的Finnhub密钥
-ANTHROPIC_API_KEY  = 你的Anthropic密钥
+OPENAI_API_KEY     = 你的OpenAI密钥
 SESSION_SECRET     = 任意随机字符串
 DB_PATH            = /data/db.json
 ```
@@ -82,7 +82,7 @@ Railway 项目 → **New** → **Volume** → Mount Path 设为 `/data`
 | 服务 | 地址 | 免费额度 |
 |------|------|----------|
 | Finnhub | https://finnhub.io | 60次/分钟 |
-| Anthropic | https://console.anthropic.com | 按量计费 |
+| OpenAI | https://platform.openai.com | 按量计费 |
 
 ## 项目结构
 

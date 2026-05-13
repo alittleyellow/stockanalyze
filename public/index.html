@@ -870,8 +870,8 @@
         <div class="card-header">
           <h2>AI 分析</h2>
           <div class="provider-toggle">
-            <button class="provider-btn active" id="btnOpenAI" onclick="setAnalyzeProvider('openai')">OpenAI</button>
-            <button class="provider-btn" id="btnClaude" onclick="setAnalyzeProvider('anthropic')">Claude</button>
+            <button class="provider-btn active" id="btnGpt5" onclick="setAnalyzeModel('gpt-5')">GPT-5</button>
+            <button class="provider-btn" id="btnGpt4" onclick="setAnalyzeModel('gpt-4.1')">GPT-4.1</button>
           </div>
         </div>
         <div class="ai-content" id="aiContent">
@@ -1330,12 +1330,12 @@ function getTimeAgo(ts) {
   return day + '天前';
 }
 
-let analyzeProvider = 'openai';
+let analyzeModel = 'gpt-5';
 
-function setAnalyzeProvider(p) {
-  analyzeProvider = p;
-  document.getElementById('btnOpenAI').classList.toggle('active', p === 'openai');
-  document.getElementById('btnClaude').classList.toggle('active', p === 'anthropic');
+function setAnalyzeModel(m) {
+  analyzeModel = m;
+  document.getElementById('btnGpt5').classList.toggle('active', m === 'gpt-5');
+  document.getElementById('btnGpt4').classList.toggle('active', m === 'gpt-4.1');
   runAnalysis();
 }
 
@@ -1384,7 +1384,7 @@ ${portfolioData}
     const res = await fetch('/api/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, provider: analyzeProvider })
+      body: JSON.stringify({ prompt, model: analyzeModel })
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);

@@ -211,46 +211,21 @@ app.get('/api/news', requireAuth, async (req, res) => {
 });
 
 // AI 统一调用helper — 优先 OpenAI，备用 Anthropic
-async function callAI({ system, messages, maxTokens = 600, model, forceProvider }) {
+async function callAI({ system, messages, maxTokens = 600, model }) {
   const openaiKey = process.env.OPENAI_API_KEY;
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (!openaiKey) throw new Error('未配置 OPENAI_API_KEY');
 
-  const useOpenAI = forceProvider === 'openai' ? !!openaiKey :
-                    forceProvider === 'anthropic' ? false : !!openaiKey;
-  const useAnthropic = forceProvider === 'anthropic' ? !!anthropicKey :
-                       forceProvider === 'openai' ? false : (!openaiKey && !!anthropicKey);
-
-  if (forceProvider === 'openai' && !openaiKey) throw new Error('未配置 OPENAI_API_KEY');
-  if (forceProvider === 'anthropic' && !anthropicKey) throw new Error('未配置 ANTHROPIC_API_KEY');
-
-  if (useOpenAI) {
-    const finalModel = model || (forceProvider === 'openai' ? 'gpt-5' : (process.env.CHAT_MODEL || 'gpt-5'));
-    const fullMessages = system ? [{ role: 'system', content: system }, ...messages] : messages;
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
-      body: JSON.stringify({ model: finalModel, max_tokens: maxTokens, messages: fullMessages }),
-      timeout: 30000,
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
-    return data.choices?.[0]?.message?.content || '';
-  }
-
-  if (useAnthropic) {
-    const finalModel = model || (forceProvider === 'anthropic' ? 'claude-sonnet-4-6' : (process.env.CHAT_MODEL || 'claude-sonnet-4-6'));
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': anthropicKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: finalModel, max_tokens: maxTokens, ...(system ? { system } : {}), messages }),
-      timeout: 30000,
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
-    return data.content?.[0]?.text || '';
-  }
-
-  throw new Error('未配置 OPENAI_API_KEY 或 ANTHROPIC_API_KEY');
+  const finalModel = model || process.env.CHAT_MODEL || 'gpt-5';
+  const fullMessages = system ? [{ role: 'system', content: system }, ...messages] : messages;
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
+    body: JSON.stringify({ model: finalModel, max_tokens: maxTokens, messages: fullMessages }),
+    timeout: 30000,
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  return data.choices?.[0]?.message?.content || '';
 }
 
 // AI 聊天 — 每日次数限制
@@ -265,8 +240,8 @@ app.get('/api/chat/remaining', requireAuth, (req, res) => {
 });
 
 app.post('/api/chat', requireAuth, async (req, res) => {
-  if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY)
-    return res.status(503).json({ error: '服务器未配置 AI API Key' });
+  if (!process.env.OPENAI_API_KEY)
+    return res.status(503).json({ error: '服务器未配置 OPENAI_API_KEY' });
 
   const { message, history } = req.body;
   if (!message?.trim()) return res.status(400).json({ error: '消息不能为空' });
@@ -305,21 +280,21 @@ app.post('/api/chat', requireAuth, async (req, res) => {
 });
 
 // AI 分析
+const ALLOWED_MODELS = ['gpt-5', 'gpt-4.1'];
+
 app.post('/api/analyze', requireAuth, async (req, res) => {
-  if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY)
-    return res.status(503).json({ error: '服务器未配置 AI API Key' });
-  const { prompt, provider } = req.body;
+  if (!process.env.OPENAI_API_KEY)
+    return res.status(503).json({ error: '服务器未配置 OPENAI_API_KEY' });
+  const { prompt, model } = req.body;
   if (!prompt) return res.status(400).json({ error: '缺少 prompt' });
+  const analyzeModel = ALLOWED_MODELS.includes(model) ? model : (process.env.ANALYZE_MODEL || 'gpt-5');
   try {
-    const analyzeModel = process.env.ANALYZE_MODEL ||
-      (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-5');
     const text = await callAI({
       messages: [{ role: 'user', content: prompt }],
       maxTokens: 4000,
       model: analyzeModel,
-      forceProvider: provider,
     });
-    res.json({ text });
+    res.json({ text, model: analyzeModel });
   } catch (e) {
     res.status(502).json({ error: e.message });
   }
@@ -327,12 +302,8 @@ app.post('/api/analyze', requireAuth, async (req, res) => {
 
 // 当前 AI provider 信息
 app.get('/api/ai-info', requireAuth, (req, res) => {
-  const openaiKey = process.env.OPENAI_API_KEY;
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  if (openaiKey) {
+  if (process.env.OPENAI_API_KEY) {
     res.json({ provider: 'OpenAI', model: process.env.CHAT_MODEL || 'gpt-5' });
-  } else if (anthropicKey) {
-    res.json({ provider: 'Anthropic (Claude)', model: process.env.CHAT_MODEL || 'claude-sonnet-4-6' });
   } else {
     res.json({ provider: '未配置', model: null });
   }
