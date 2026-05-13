@@ -220,7 +220,7 @@ async function callAI({ system, messages, maxTokens = 600, model }) {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
-    body: JSON.stringify({ model: finalModel, max_tokens: maxTokens, messages: fullMessages }),
+    body: JSON.stringify({ model: finalModel, max_completion_tokens: maxTokens, messages: fullMessages }),
     timeout: 30000,
   });
   const data = await res.json();
