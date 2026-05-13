@@ -224,7 +224,7 @@ async function callAI({ system, messages, maxTokens = 600, model, forceProvider 
   if (forceProvider === 'anthropic' && !anthropicKey) throw new Error('未配置 ANTHROPIC_API_KEY');
 
   if (useOpenAI) {
-    const finalModel = model || (forceProvider === 'openai' ? 'gpt-4o' : (process.env.CHAT_MODEL || 'gpt-4o-mini'));
+    const finalModel = model || (forceProvider === 'openai' ? 'gpt-5' : (process.env.CHAT_MODEL || 'gpt-5'));
     const fullMessages = system ? [{ role: 'system', content: system }, ...messages] : messages;
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -312,7 +312,7 @@ app.post('/api/analyze', requireAuth, async (req, res) => {
   if (!prompt) return res.status(400).json({ error: '缺少 prompt' });
   try {
     const analyzeModel = process.env.ANALYZE_MODEL ||
-      (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o');
+      (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-5');
     const text = await callAI({
       messages: [{ role: 'user', content: prompt }],
       maxTokens: 4000,
@@ -330,7 +330,7 @@ app.get('/api/ai-info', requireAuth, (req, res) => {
   const openaiKey = process.env.OPENAI_API_KEY;
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (openaiKey) {
-    res.json({ provider: 'OpenAI', model: process.env.CHAT_MODEL || 'gpt-4o-mini' });
+    res.json({ provider: 'OpenAI', model: process.env.CHAT_MODEL || 'gpt-5' });
   } else if (anthropicKey) {
     res.json({ provider: 'Anthropic (Claude)', model: process.env.CHAT_MODEL || 'claude-sonnet-4-6' });
   } else {
