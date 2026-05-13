@@ -312,15 +312,25 @@ async function callAI({ system, messages, maxTokens = 600, model }) {
 
   const finalModel = model || process.env.CHAT_MODEL || 'gpt-5';
   const fullMessages = system ? [{ role: 'system', content: system }, ...messages] : messages;
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
-    body: JSON.stringify({ model: finalModel, max_completion_tokens: maxTokens, messages: fullMessages }),
-    timeout: 30000,
-  });
-  const data = await res.json();
-  if (data.error) throw new Error(data.error.message);
-  return data.choices?.[0]?.message?.content || '';
+  const controller = new AbortController();
+  const timeoutMs = parseInt(process.env.OPENAI_TIMEOUT_MS || '180000');
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
+      body: JSON.stringify({ model: finalModel, max_completion_tokens: maxTokens, messages: fullMessages }),
+      signal: controller.signal,
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return data.choices?.[0]?.message?.content || '';
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error(`AI 响应超时（${timeoutMs/1000}秒），GPT-5 推理较慢，请稍后重试或切换到 GPT-4.1`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // AI 聊天 — 每日次数限制
