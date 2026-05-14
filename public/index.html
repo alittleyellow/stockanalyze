@@ -544,9 +544,26 @@
     .summary-card .value { font-size: 1.2rem; }
     .summary-card .sub { font-size: 0.66rem; margin-top: 0.3rem; }
 
-    /* Main */
+    /* Main: flatten 2-level layout so the 3 cards become direct grid items
+       we can reorder. AI 分析 above 我的持仓, 行业动态 at the bottom. */
     .main-grid { grid-template-columns: 1fr; gap: 1rem; }
-    .ai-panel { flex-direction: column; }
+    .main-grid > #holdingsCol,
+    .main-grid > .ai-panel { display: contents; }
+    #aiAnalysisCard { order: 1; }
+    #holdingsCard   { order: 2; }
+    #chartCard      { order: 3; } /* only seen here if not yet moved inline */
+    #newsCard       { order: 4; }
+
+    /* Per-stock chart/analysis injected inline below the tapped row */
+    #holdingsContainer #chartCard {
+      display: block;
+      margin: 0.4rem 0.6rem 0.8rem;
+      background: rgba(124,111,255,0.05);
+      border-color: rgba(124,111,255,0.22);
+    }
+    #holdingsContainer #chartCard .card-header { padding: 0.8rem 1rem; }
+    #holdingsContainer #chartCard .chart-wrap { padding: 0.9rem 0.9rem 0.3rem; }
+    #holdingsContainer #chartCard .ai-content { max-height: none; }
 
     .card { border-radius: 12px; }
     .card-header { padding: 0.85rem 1rem; }
@@ -985,8 +1002,8 @@
   <!-- Main -->
   <div class="main-grid">
     <!-- Holdings -->
-    <div>
-      <div class="card fade-in" style="animation-delay:0.1s">
+    <div id="holdingsCol">
+      <div class="card fade-in" id="holdingsCard" style="animation-delay:0.1s">
         <div class="card-header">
           <h2>我的持仓</h2>
           <span style="font-family:'DM Mono',monospace;font-size:0.72rem;color:var(--muted)" id="dataSource">数据来源: Finnhub</span>
@@ -1019,7 +1036,7 @@
     <!-- Right Panel -->
     <div class="ai-panel">
       <!-- AI Analysis -->
-      <div class="ai-card fade-in" style="animation-delay:0.15s">
+      <div class="ai-card fade-in" id="aiAnalysisCard" style="animation-delay:0.15s">
         <div class="card-header">
           <h2>AI 分析</h2>
           <div class="provider-toggle">
@@ -1034,7 +1051,7 @@
       </div>
 
       <!-- News -->
-      <div class="ai-card fade-in" style="animation-delay:0.2s">
+      <div class="ai-card fade-in" id="newsCard" style="animation-delay:0.2s">
         <div class="card-header">
           <h2>行业动态</h2>
           <span class="ai-badge" id="newsStatus">实时</span>
@@ -1269,6 +1286,11 @@ async function removeStock(ticker) {
   const data = await res.json();
   if (data.error) return alert(data.error);
   holdings = data;
+  if (currentChartTicker === ticker) {
+    currentChartTicker = null;
+    const cc = document.getElementById('chartCard');
+    if (cc) cc.style.display = 'none';
+  }
   renderTable();
   updateSummary();
 }
@@ -1381,6 +1403,9 @@ function updateSummary() {
 
 function renderTable() {
   const container = document.getElementById('holdingsContainer');
+  // chartCard may currently live inside this container (mobile inline mode).
+  // Move it back to its home so we don't wipe it on innerHTML reset.
+  restoreChartCardHome();
   if (!holdings.length) {
     container.innerHTML = `<div class="empty-state"><div class="icon">📈</div><p>还没有持仓，点击右上角"添加股票"开始</p></div>`;
     return;
@@ -1422,11 +1447,45 @@ function renderTable() {
         `).join('')}
       </tbody>
     </table>`;
+  // If a chart was open on mobile, re-attach it below its row after re-render.
+  if (isMobileLayout() && currentChartTicker) {
+    const chartCard = document.getElementById('chartCard');
+    const row = container.querySelector(`tr[data-ticker="${currentChartTicker}"]`);
+    if (chartCard && row && chartCard.style.display !== 'none') {
+      row.parentNode.insertBefore(chartCard, row.nextElementSibling);
+    }
+  }
   fetchNews();
 }
 
+const isMobileLayout = () => window.matchMedia('(max-width: 768px)').matches;
+
+function restoreChartCardHome() {
+  const chartCard = document.getElementById('chartCard');
+  const home = document.getElementById('holdingsCol');
+  if (chartCard && home && chartCard.parentNode !== home) {
+    home.appendChild(chartCard);
+  }
+}
+window.addEventListener('resize', () => { if (!isMobileLayout()) restoreChartCardHome(); });
+
 async function showChart(ticker) {
-  document.getElementById('chartCard').style.display = 'block';
+  const chartCard = document.getElementById('chartCard');
+
+  if (isMobileLayout()) {
+    // Toggle: tap the same row again to collapse
+    if (currentChartTicker === ticker && chartCard.style.display !== 'none') {
+      chartCard.style.display = 'none';
+      currentChartTicker = null;
+      return;
+    }
+    const row = document.querySelector(`tr[data-ticker="${ticker}"]`);
+    if (row) row.parentNode.insertBefore(chartCard, row.nextElementSibling);
+  } else {
+    restoreChartCardHome();
+  }
+
+  chartCard.style.display = 'block';
   document.getElementById('chartTitle').textContent = ticker + ' 近30天走势';
   currentChartTicker = ticker;
   runStockAnalysis();
