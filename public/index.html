@@ -553,10 +553,9 @@
     .main-grid { grid-template-columns: 1fr; gap: 1rem; }
     .main-grid > #holdingsCol,
     .main-grid > .ai-panel { display: contents; }
-    #aiAnalysisCard { order: 1; }
-    #holdingsCard   { order: 2; }
-    #chartCard      { order: 3; } /* only seen here if not yet moved inline */
-    #newsCard       { order: 4; }
+    #holdingsCard   { order: 1; }
+    #chartCard      { order: 2; } /* only seen here if not yet moved inline */
+    #newsCard       { order: 3; }
 
     /* Per-stock chart/analysis injected inline below the tapped row */
     #holdingsContainer #chartCard {
@@ -1033,27 +1032,13 @@
           <h3 style="font-size:.95rem;color:var(--fg);margin:0">个股 AI 分析</h3>
           <button class="btn" id="stockAnalyzeBtn" onclick="runStockAnalysis(true)" style="padding:.3rem .8rem;font-size:.78rem">重新分析</button>
         </div>
+        <div style="padding:.45rem 1.4rem 0;font-family:'DM Mono',monospace;font-size:.65rem;color:var(--muted);letter-spacing:.04em;">⚠ 仅供参考，不构成投资建议</div>
         <div class="ai-content" id="stockAnalysisContent" style="padding:.6rem 1.4rem 1.2rem;font-size:.85rem;color:var(--muted)">选择上方个股后将自动生成分析…</div>
       </div>
     </div>
 
     <!-- Right Panel -->
     <div class="ai-panel">
-      <!-- AI Analysis -->
-      <div class="ai-card fade-in" id="aiAnalysisCard" style="animation-delay:0.15s">
-        <div class="card-header">
-          <h2>AI 分析</h2>
-          <div class="provider-toggle">
-            <button class="provider-btn active" id="btnGpt5" onclick="setAnalyzeModel('gpt-5')">GPT-5</button>
-            <button class="provider-btn" id="btnGpt4" onclick="setAnalyzeModel('gpt-4.1')">GPT-4.1</button>
-          </div>
-        </div>
-        <div class="ai-content" id="aiContent">
-          <span style="color:var(--muted);font-size:0.82rem">添加股票后，AI 将每天自动分析你的持仓并给出买入/卖出建议。</span>
-        </div>
-        <div class="ai-footer" id="aiTime">等待分析...</div>
-      </div>
-
       <!-- News -->
       <div class="ai-card fade-in" id="newsCard" style="animation-delay:0.2s">
         <div class="card-header">
@@ -1209,8 +1194,6 @@ async function proxyFetch(url) {
 let holdings = [];
 let priceCache = {};
 let chartInstance = null;
-let lastAnalysisDate = '';
-let lastAnalysis = '';
 let currentChartTicker = '';
 const stockAnalysisCache = {};
 let currentUser = null;
@@ -1346,7 +1329,6 @@ async function fetchPrices() {
   }));
   updateSummary();
   document.getElementById('lastUpdate').textContent = '更新于 ' + new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'});
-  checkAndRunAnalysis();
 }
 
 function updateRow(ticker) {
@@ -1636,90 +1618,9 @@ function getTimeAgo(ts) {
   return day + '天前';
 }
 
-let analyzeModel = 'gpt-5';
-
-function setAnalyzeModel(m) {
-  analyzeModel = m;
-  document.getElementById('btnGpt5').classList.toggle('active', m === 'gpt-5');
-  document.getElementById('btnGpt4').classList.toggle('active', m === 'gpt-4.1');
-  runAnalysis();
-  if (currentChartTicker) runStockAnalysis();
-}
-
-function checkAndRunAnalysis() {
-  if (!holdings.length) return;
-  const today = new Date().toDateString();
-  if (lastAnalysisDate === today && lastAnalysis) {
-    renderAnalysis(lastAnalysis);
-    return;
-  }
-  runAnalysis();
-}
-
-async function runAnalysis() {
-  if (!holdings.length) return;
-  const aiEl = document.getElementById('aiContent');
-  aiEl.innerHTML = '<div class="loading"><span class="spinner"></span> AI 正在分析你的持仓...</div>';
-  aiEl.className = 'ai-content loading';
-
-  const portfolioData = holdings.map(h => {
-    const d = priceCache[h.ticker];
-    const price = d?.price || 0;
-    const pnlPct = price ? ((price - h.cost) / h.cost * 100) : 0;
-    return `${h.ticker}(${h.name}): 持股${h.shares}股, 成本$${h.cost}, 现价$${price.toFixed(2)}, 盈亏${pnlPct.toFixed(1)}%, 行业:${h.sector}`;
-  }).join('\n');
-
-  const prompt = `你是一位专业的股票分析师。以下是用户的股票持仓数据（今日 ${new Date().toLocaleDateString('zh-CN')}）：
-
-${portfolioData}
-
-请用中文分析，严格按照以下格式输出，不要有多余的开场白：
-
-**整体持仓评估**
-（2-3句话评估整体健康度、分散度、盈亏情况）
-
-**个股建议**
-对每只股票单独一段，格式如下：
-[股票代码] [买入] / [持有] / [卖出]
-• 建议理由：（结合当前盈亏、行业趋势、估值，2-3句话）
-• 操作建议：（具体操作，如"可在当前价位分批加仓"、"建议止盈50%"、"设置止损位$xxx"等）
-
-**风险提示**
-（列出1-2条最需要关注的风险）`;
-
-  try {
-    const res = await fetch('/api/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, model: analyzeModel })
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-    const text = data.text || '';
-    lastAnalysis = text;
-    lastAnalysisDate = new Date().toDateString();
-    renderAnalysis(text);
-  } catch(e) {
-    aiEl.className = 'ai-content';
-    aiEl.innerHTML = `<span style="color:var(--red);font-size:0.82rem">分析失败: ${e.message}</span>`;
-  }
-}
-
-function renderAnalysis(text) {
-  const aiEl = document.getElementById('aiContent');
-  aiEl.className = 'ai-content';
-  let html = text
-    .replace(/\[买入\]/g, '<span class="signal buy">买入</span>')
-    .replace(/\[持有\]/g, '<span class="signal hold">持有</span>')
-    .replace(/\[卖出\]/g, '<span class="signal sell">卖出</span>')
-    .split('\n').filter(l => l.trim()).map(l => `<p>${l}</p>`).join('');
-  aiEl.innerHTML = html;
-  document.getElementById('aiTime').textContent = '分析时间: ' + new Date().toLocaleString('zh-CN', {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
-}
+const analyzeModel = 'gpt-5';
 
 function refreshAll() {
-  lastAnalysisDate = '';
-  lastAnalysis = '';
   fetchPrices();
 }
 
@@ -1868,8 +1769,6 @@ async function logout() {
   currentUser = null;
   holdings = [];
   priceCache = {};
-  lastAnalysisDate = '';
-  lastAnalysis = '';
   renderTable();
   updateSummary();
   document.getElementById('currentUserBadge').textContent = '';
