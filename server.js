@@ -315,11 +315,16 @@ async function callAI({ system, messages, maxTokens = 600, model }) {
   const controller = new AbortController();
   const timeoutMs = parseInt(process.env.OPENAI_TIMEOUT_MS || '180000');
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const payload = { model: finalModel, max_completion_tokens: maxTokens, messages: fullMessages };
+  // GPT-5 是推理模型，minimal 档把推理 token 降到最低，速度可快 2–5×
+  if (/^gpt-5/i.test(finalModel)) {
+    payload.reasoning_effort = process.env.GPT5_REASONING_EFFORT || 'minimal';
+  }
   try {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
-      body: JSON.stringify({ model: finalModel, max_completion_tokens: maxTokens, messages: fullMessages }),
+      body: JSON.stringify(payload),
       signal: controller.signal,
     });
     const data = await res.json();
